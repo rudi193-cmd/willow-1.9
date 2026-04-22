@@ -23,6 +23,9 @@ from pathlib import Path
 WILLOW_ROOT = Path(__file__).parent
 VERSION = "1.9.0"
 
+# Ensure willow-1.9 is first on path — strip any willow-1.7 entries
+sys.path = [str(WILLOW_ROOT)] + [p for p in sys.path if "willow-1.7" not in p]
+
 
 def step_1_dirs() -> None:
     """Create ~/.willow/ structure and ~/SAFE/Applications/."""
@@ -115,14 +118,22 @@ def step_4_vault() -> Path:
     return vault_path
 
 
+def _load_pg_bridge():
+    """Load pg_bridge from willow-1.9 explicitly — no path ambiguity."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "pg_bridge_19", WILLOW_ROOT / "core" / "pg_bridge.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def step_5_schema(skip_pg: bool = False) -> None:
     """Initialize Postgres schema via pg_bridge."""
     if skip_pg:
         return
-    sys.path.insert(0, str(WILLOW_ROOT))
-    import importlib
-    import core.pg_bridge as pgb
-    importlib.reload(pgb)
+    pgb = _load_pg_bridge()
     pgb.PgBridge()
     print("  Postgres: schema initialized")
 
@@ -155,10 +166,7 @@ def step_7_cmb(skip_pg: bool = False) -> None:
     if skip_pg:
         return
     import datetime
-    sys.path.insert(0, str(WILLOW_ROOT))
-    import importlib
-    import core.pg_bridge as pgb
-    importlib.reload(pgb)
+    pgb = _load_pg_bridge()
     bridge = pgb.PgBridge()
     bridge.cmb_put("cmb_origin", {
         "event": "system_birth",
