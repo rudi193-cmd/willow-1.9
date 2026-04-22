@@ -182,10 +182,11 @@ def test_dark_matter_skips_same_project():
 
     dark_matter_pass(bridge, min_overlap=2)
 
+    # Same project — no dark matter atom should link dm_same_a to dm_same_b
     with bridge.conn.cursor() as cur:
         cur.execute(
             "SELECT COUNT(*) FROM knowledge WHERE source_type = 'dark_matter' "
-            "AND content::text LIKE '%dm_same%'"
+            "AND content::text LIKE '%dm_same_a%' AND content::text LIKE '%dm_same_b%'"
         )
         dm_for_same = cur.fetchone()[0]
     assert dm_for_same == 0

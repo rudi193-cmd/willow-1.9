@@ -34,6 +34,16 @@ def _load_pg_bridge():
     return mod
 
 
+def _load_intelligence():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "intelligence_19", WILLOW_ROOT / "core" / "intelligence.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def compost_pass(dry_run: bool = False) -> int:
     """
     Flat file lifecycle: retire turn-level atoms once session composite exists.
@@ -186,16 +196,41 @@ def write_briefing(report: dict) -> None:
 
 
 def norn_pass(dry_run: bool = False) -> dict:
-    """Run all three Norn jobs. Returns report dict."""
+    """Run all Norn jobs including intelligence passes. Returns report dict."""
     composted = compost_pass(dry_run=dry_run)
     communities = community_pass(dry_run=dry_run)
     heartbeat = measure_heartbeat()
+
+    draugr_count = serendipity_count = dark_matter_count = 0
+    revelation_count = mirror_count = mycorrhizal_count = 0
+
+    if not dry_run:
+        try:
+            pgb = _load_pg_bridge()
+            bridge = pgb.PgBridge()
+            intel = _load_intelligence()
+            zombie_ids = intel.draugr_scan(bridge)
+            draugr_count = intel.draugr_mark(bridge, zombie_ids)
+            serendipity_count = len(intel.serendipity_pass(bridge))
+            dark_matter_count = intel.dark_matter_pass(bridge)
+            revelation_count = intel.revelation_pass(bridge)
+            mirror_count = intel.mirror_pass(bridge)
+            mycorrhizal_count = intel.mycorrhizal_pass(bridge)
+        except Exception:
+            pass
+
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "composted": composted,
         "communities": communities,
         "heartbeat": heartbeat,
         "squeakdog": heartbeat > 0.6,
+        "draugr": draugr_count,
+        "serendipity": serendipity_count,
+        "dark_matter": dark_matter_count,
+        "revelations": revelation_count,
+        "mirror": mirror_count,
+        "mycorrhizal": mycorrhizal_count,
     }
     if not dry_run:
         write_briefing(report)

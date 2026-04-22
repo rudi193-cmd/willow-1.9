@@ -40,3 +40,10 @@ def test_norn_pass_squeakdog_field():
     report = norn_pass(dry_run=True)
     assert "squeakdog" in report
     assert isinstance(report["squeakdog"], bool)
+
+
+def test_norn_pass_report_has_intelligence_fields():
+    from core.metabolic import norn_pass
+    report = norn_pass(dry_run=True)
+    for field in ("draugr", "serendipity", "dark_matter", "revelations", "mirror", "mycorrhizal"):
+        assert field in report, f"missing field: {field}"
