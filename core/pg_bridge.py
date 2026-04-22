@@ -33,11 +33,6 @@ CREATE TABLE IF NOT EXISTS knowledge (
     category    TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_knowledge_project ON knowledge (project);
-CREATE INDEX IF NOT EXISTS idx_knowledge_valid_at ON knowledge (valid_at);
-CREATE INDEX IF NOT EXISTS idx_knowledge_invalid_at ON knowledge (invalid_at)
-    WHERE invalid_at IS NOT NULL;
-
 CREATE TABLE IF NOT EXISTS cmb_atoms (
     id          TEXT PRIMARY KEY,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -62,6 +57,22 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 """
 
+# Columns added after initial deployment — safe to run repeatedly.
+_MIGRATIONS = [
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'global'",
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS valid_at TIMESTAMPTZ NOT NULL DEFAULT now()",
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS invalid_at TIMESTAMPTZ",
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS category TEXT",
+    "ALTER TABLE frank_ledger ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'global'",
+]
+
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_knowledge_project ON knowledge (project);
+CREATE INDEX IF NOT EXISTS idx_knowledge_valid_at ON knowledge (valid_at);
+CREATE INDEX IF NOT EXISTS idx_knowledge_invalid_at ON knowledge (invalid_at)
+    WHERE invalid_at IS NOT NULL;
+"""
+
 
 def _connect() -> "psycopg2.connection":
     return psycopg2.connect(
@@ -82,6 +93,9 @@ def try_connect() -> Optional["psycopg2.connection"]:
 def init_schema(conn: "psycopg2.connection") -> None:
     with conn.cursor() as cur:
         cur.execute(_SCHEMA)
+        for stmt in _MIGRATIONS:
+            cur.execute(stmt)
+        cur.execute(_INDEXES)
     conn.commit()
 
 
