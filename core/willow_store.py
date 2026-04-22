@@ -104,6 +104,15 @@ class WillowStore:
             results.extend(self.search(collection, query))
         return results
 
+    def stats(self) -> dict:
+        result = {}
+        for c in self.collections():
+            conn = self._conn(c)
+            row = conn.execute("SELECT COUNT(*) FROM records").fetchone()
+            conn.close()
+            result[c] = {"count": row[0] if row else 0}
+        return result
+
     def all(self, collection: str) -> list:
         """Alias for list() — sap_mcp.py compatibility."""
         return self.list(collection)

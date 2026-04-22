@@ -94,9 +94,12 @@ try:
     _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
     from core.gleipnir import check as _gleipnir_check
     _GLEIPNIR = True
-except ImportError:
+except ImportError as _gl_err:
     _GLEIPNIR = False
     def _gleipnir_check(app_id, tool_name): return True, ""
+    print(f"[gleipnir] import failed: {_gl_err}", file=sys.stderr)
+
+print(f"[gleipnir] _GLEIPNIR={_GLEIPNIR}", file=sys.stderr)
 
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
@@ -104,24 +107,27 @@ from willow_store import WillowStore
 # ── Postgres bridge ───────────────────────────────────────────────────────────
 try:
     from pg_bridge import try_connect, PgBridge
-    pg = try_connect()
-except Exception:
+    pg = PgBridge()
+except Exception as _pg_init_err:
     pg = None
+    print(f"[pg] PgBridge init failed: {_pg_init_err}", file=sys.stderr)
 
 # Cached 1.9 PgBridge for tools that need 1.9 methods (knowledge_at, etc.).
 # Safe without a lock: MCP stdio server is single-threaded asyncio. A race
 # would open at most two connections on first call; subsequent calls reuse the
 # cached instance. Add asyncio.Lock here if threading is ever introduced.
 _pg19 = None
+_pg19_error = None
 
 def _get_pg19():
-    global _pg19
-    if _pg19 is None:
+    global _pg19, _pg19_error
+    if _pg19 is None and _pg19_error is None:
         try:
             from core.pg_bridge import PgBridge as _PB19
             _pg19 = _PB19()
-        except Exception:
-            pass
+        except Exception as _e:
+            _pg19_error = str(_e)
+            print(f"[pg19] connect failed: {_e}", file=sys.stderr)
     return _pg19
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -890,14 +896,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             else:
                 query = arguments["query"]
                 limit = arguments.get("limit", 20)
-                knowledge = pg.search_knowledge(query, limit)
-                ganesha = pg.search_ganesha(query, min(limit, 5))
-                entities = pg.search_entities(query, min(limit, 5))
+                knowledge = pg.knowledge_search(query, limit=limit)
                 result = {
                     "knowledge": knowledge,
-                    "ganesha_atoms": ganesha,
-                    "entities": entities,
-                    "total": len(knowledge) + len(ganesha) + len(entities),
+                    "ganesha_atoms": [],
+                    "entities": [],
+                    "total": len(knowledge),
                 }
                 _sanitize_result(result, "willow_knowledge_search")
 
@@ -920,14 +924,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 }
 
         elif name == "willow_knowledge_at":
-            _bridge19 = _get_pg19()
-            if not _bridge19:
+            if not pg:
                 result = {"error": "not_available", "reason": "Postgres not connected"}
             else:
                 from datetime import datetime as _dt
                 _raw_time = arguments["at_time"].replace("Z", "+00:00")
                 _at = _dt.fromisoformat(_raw_time)
-                results = _bridge19.knowledge_at(
+                results = pg.knowledge_at(
                     arguments["query"],
                     at_time=_at,
                     project=arguments.get("project"),
@@ -992,7 +995,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         elif name in ("willow_status", "willow_system_status"):
             local_stats = store.stats()
             local_count = sum(s["count"] for s in local_stats.values()) if local_stats else 0
-            pg_stats = pg.stats() if pg else {}
+            pg_stats = pg.stats() if pg and hasattr(pg, "stats") else {}
             try:
                 from sap.core.gate import SAFE_ROOT, PROFESSOR_ROOT, _verify_pgp
                 _pass, _fail = 0, []
@@ -1009,7 +1012,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 manifests = {"error": str(_e)}
             result = {
                 "local_store": {"collections": len(local_stats), "records": local_count},
-                "postgres": pg_stats if pg_stats else "not_connected",
+                "postgres": pg_stats if pg_stats else ("not_connected" if not _pg19_error else f"error: {_pg19_error}"),
                 "ollama": _check_ollama(),
                 "manifests": manifests,
                 "mode": "portless",
