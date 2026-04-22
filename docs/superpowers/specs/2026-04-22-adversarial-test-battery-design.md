@@ -90,7 +90,7 @@ Tests `core/memory_sanitizer.py` — the sanitizer flags (does not strip) suspic
 |------|---------|-----------|
 | `test_clean_normal_kb_atom` | Standard knowledge atom text | `.clean == True` |
 | `test_no_false_positive_normal_imperative` | `"the server must restart after config changes"` | No flag (technical documentation, not instruction to LLM) |
-| `test_no_false_positive_act_as_assistant` | `"act as a helpful assistant"` | No flag (excluded by negative lookahead) |
+| `test_no_false_positive_act_as_assistant` | `"the bot will act as an assistant for customer service"` | No flag — `(?!an?\\s+assistant)` correctly excludes "act as an assistant" |
 | `test_wrapped_output_has_provenance_delimiters` | Any input | Output contains `WILLOW_MEMORY` open/close tags |
 | `test_high_severity_property` | Payload with `high` flag | `.high_severity == True` |
 
