@@ -203,6 +203,7 @@ def norn_pass(dry_run: bool = False) -> dict:
 
     draugr_count = serendipity_count = dark_matter_count = 0
     revelation_count = mirror_count = mycorrhizal_count = 0
+    grove_indexed = 0
     intelligence_error = None
 
     if not dry_run:
@@ -222,6 +223,19 @@ def norn_pass(dry_run: bool = False) -> dict:
             print(f"[norn] intelligence pass error: {_e}", file=_sys.stderr)
             intelligence_error = str(_e)
 
+        # Grove message ingest — optional, skipped silently if Grove not present
+        try:
+            import importlib.util as _ilu
+            _grove_root = WILLOW_ROOT.parent / "safe-app-grove"
+            _si_path = _grove_root / "safe_integration.py"
+            if _si_path.exists():
+                _si_spec = _ilu.spec_from_file_location("grove_safe_integration", _si_path)
+                _si_mod = _ilu.module_from_spec(_si_spec)
+                _si_spec.loader.exec_module(_si_mod)
+                grove_indexed = _si_mod.flush_to_kb()
+        except Exception:
+            pass
+
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "composted": composted,
@@ -234,6 +248,7 @@ def norn_pass(dry_run: bool = False) -> dict:
         "revelations": revelation_count,
         "mirror": mirror_count,
         "mycorrhizal": mycorrhizal_count,
+        "grove_indexed": grove_indexed,
     }
     if intelligence_error:
         report["intelligence_error"] = intelligence_error
