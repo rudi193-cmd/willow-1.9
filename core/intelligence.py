@@ -13,7 +13,6 @@ W19MC: Mycorrhizal — sparse KB feeding from adjacent projects
 import psycopg2.extras
 from collections import Counter
 from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 
 _SYSTEM_SOURCE_TYPES = frozenset({
@@ -44,13 +43,16 @@ def draugr_scan(bridge, days: int = 60) -> list:
 
 
 def draugr_mark(bridge, atom_ids: list) -> int:
-    """Mark draugr atoms with category='draugr'. Does not close or delete them."""
+    """Mark draugr atoms with category='draugr'. Does not close or delete them.
+    System source types (community_detection, dark_matter, etc.) are never marked."""
     if not atom_ids:
         return 0
     with bridge.conn.cursor() as cur:
         cur.execute(
-            "UPDATE knowledge SET category = 'draugr' WHERE id = ANY(%s) AND invalid_at IS NULL",
-            (atom_ids,)
+            "UPDATE knowledge SET category = 'draugr' "
+            "WHERE id = ANY(%s) AND invalid_at IS NULL "
+            "AND (source_type IS NULL OR source_type NOT IN %s)",
+            (atom_ids, tuple(_SYSTEM_SOURCE_TYPES))
         )
         count = cur.rowcount
     bridge.conn.commit()
@@ -190,7 +192,8 @@ def revelation_pass(bridge, min_overlap: int = 3) -> int:
             overlap = _keywords(a) & _keywords(b)
             if len(overlap) >= min_overlap:
                 seen_pairs.add(pair_key)
-                rev_id = f"rev_{a['project'][:8]}_{b['project'][:8]}"
+                # Monthly ID: one revelation per project-pair per month, newest wins
+                rev_id = f"rev_{a['project'][:8]}_{b['project'][:8]}_{datetime.now(timezone.utc).strftime('%Y%m')}"
                 bridge.knowledge_put({
                     "id": rev_id,
                     "project": "revelation",

@@ -40,29 +40,40 @@ def collect_dpo_pairs(bridge, store, output_dir: Optional[Path] = None,
         return 0
 
     try:
-        proj_filter = "AND project = %s" if project else ""
-        proj_params = [project] if project else []
+        chosen_filters = [
+            "invalid_at IS NULL",
+            "source_type IN ('community_detection', 'revelation', 'mirror')",
+            "summary IS NOT NULL", "summary != ''",
+        ]
+        rejected_filters = [
+            "invalid_at IS NULL",
+            "(category = 'draugr' OR summary IS NULL OR summary = '')",
+        ]
+        chosen_params: list = []
+        rejected_params: list = []
+        if project:
+            chosen_filters.append("project = %s")
+            chosen_params.append(project)
+            rejected_filters.append("project = %s")
+            rejected_params.append(project)
 
         with bridge.conn.cursor(cursor_factory=_pex.RealDictCursor) as cur:
-            cur.execute(f"""
-                SELECT id, project, title, summary, source_type FROM knowledge
-                WHERE invalid_at IS NULL
-                  AND source_type IN ('community_detection', 'revelation', 'mirror')
-                  AND summary IS NOT NULL AND summary != ''
-                  {proj_filter}
-                ORDER BY created_at DESC LIMIT 50
-            """, proj_params)
+            cur.execute(
+                "SELECT id, project, title, summary, source_type FROM knowledge "
+                f"WHERE {' AND '.join(chosen_filters)} ORDER BY created_at DESC LIMIT 50",
+                chosen_params,
+            )
             chosen_candidates = [dict(r) for r in cur.fetchall()]
 
-            cur.execute(f"""
-                SELECT id, project, title, summary FROM knowledge
-                WHERE invalid_at IS NULL
-                  AND (category = 'draugr' OR summary IS NULL OR summary = '')
-                  {proj_filter}
-                ORDER BY created_at ASC LIMIT 50
-            """, proj_params)
+            cur.execute(
+                "SELECT id, project, title, summary FROM knowledge "
+                f"WHERE {' AND '.join(rejected_filters)} ORDER BY created_at ASC LIMIT 50",
+                rejected_params,
+            )
             rejected_candidates = [dict(r) for r in cur.fetchall()]
-    except Exception:
+    except Exception as _e:
+        import sys as _sys
+        print(f"[valhalla] collection error: {_e}", file=_sys.stderr)
         return 0
 
     if not chosen_candidates or not rejected_candidates:

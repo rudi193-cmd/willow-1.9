@@ -203,6 +203,7 @@ def norn_pass(dry_run: bool = False) -> dict:
 
     draugr_count = serendipity_count = dark_matter_count = 0
     revelation_count = mirror_count = mycorrhizal_count = 0
+    intelligence_error = None
 
     if not dry_run:
         try:
@@ -216,8 +217,10 @@ def norn_pass(dry_run: bool = False) -> dict:
             revelation_count = intel.revelation_pass(bridge)
             mirror_count = intel.mirror_pass(bridge)
             mycorrhizal_count = intel.mycorrhizal_pass(bridge)
-        except Exception:
-            pass
+        except Exception as _e:
+            import sys as _sys
+            print(f"[norn] intelligence pass error: {_e}", file=_sys.stderr)
+            intelligence_error = str(_e)
 
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -232,6 +235,8 @@ def norn_pass(dry_run: bool = False) -> dict:
         "mirror": mirror_count,
         "mycorrhizal": mycorrhizal_count,
     }
+    if intelligence_error:
+        report["intelligence_error"] = intelligence_error
     if not dry_run:
         write_briefing(report)
     return report

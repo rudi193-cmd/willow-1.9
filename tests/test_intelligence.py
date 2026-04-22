@@ -159,7 +159,12 @@ def test_dark_matter_writes_implicit_connection():
         assert cur.fetchone()[0] >= 1
 
     with bridge.conn.cursor() as cur:
-        cur.execute("DELETE FROM knowledge WHERE project IN ('test_dm_proj_a', 'test_dm_proj_b', 'dark_matter')")
+        cur.execute("DELETE FROM knowledge WHERE project IN ('test_dm_proj_a', 'test_dm_proj_b')")
+        # Remove only the dark_matter atoms created by this test's atom pairs
+        cur.execute(
+            "DELETE FROM knowledge WHERE source_type = 'dark_matter' "
+            "AND (content::text LIKE '%dm_atom_a%' OR content::text LIKE '%dm_atom_b%')"
+        )
     bridge.conn.commit()
 
 
@@ -192,7 +197,11 @@ def test_dark_matter_skips_same_project():
     assert dm_for_same == 0
 
     with bridge.conn.cursor() as cur:
-        cur.execute("DELETE FROM knowledge WHERE project IN ('test_dm_same', 'dark_matter')")
+        cur.execute("DELETE FROM knowledge WHERE project = 'test_dm_same'")
+        cur.execute(
+            "DELETE FROM knowledge WHERE source_type = 'dark_matter' "
+            "AND (content::text LIKE '%dm_same_a%' OR content::text LIKE '%dm_same_b%')"
+        )
     bridge.conn.commit()
 
 
@@ -225,7 +234,11 @@ def test_revelation_detects_cross_project_convergence():
         assert cur.fetchone()[0] >= 1
 
     with bridge.conn.cursor() as cur:
-        cur.execute("DELETE FROM knowledge WHERE project IN ('test_rv_proj_a', 'test_rv_proj_b', 'revelation')")
+        cur.execute("DELETE FROM knowledge WHERE project IN ('test_rv_proj_a', 'test_rv_proj_b')")
+        cur.execute(
+            "DELETE FROM knowledge WHERE source_type = 'revelation' "
+            "AND (content::text LIKE '%rv_community_a%' OR content::text LIKE '%rv_community_b%')"
+        )
     bridge.conn.commit()
 
 
@@ -287,7 +300,11 @@ def test_mirror_writes_meta_community():
         assert cur.fetchone()[0] >= 1
 
     with bridge.conn.cursor() as cur:
-        cur.execute("DELETE FROM knowledge WHERE project LIKE 'test_mr_%' OR project = 'mirror'")
+        cur.execute("DELETE FROM knowledge WHERE project LIKE 'test_mr_%'")
+        cur.execute(
+            "DELETE FROM knowledge WHERE source_type = 'mirror' "
+            "AND content::text LIKE '%test_mr_%'"
+        )
     bridge.conn.commit()
 
 

@@ -108,7 +108,10 @@ try:
 except Exception:
     pg = None
 
-# Cached 1.9 PgBridge for tools that need 1.9 methods (knowledge_at, etc.)
+# Cached 1.9 PgBridge for tools that need 1.9 methods (knowledge_at, etc.).
+# Safe without a lock: MCP stdio server is single-threaded asyncio. A race
+# would open at most two connections on first call; subsequent calls reuse the
+# cached instance. Add asyncio.Lock here if threading is ever introduced.
 _pg19 = None
 
 def _get_pg19():
