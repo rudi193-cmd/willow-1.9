@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from willow.fylgja.install import build_hooks_block, apply_hooks
+from willow.fylgja.install import build_hooks_block, apply_hooks, apply_plugin
 
 PACKAGE_ROOT = Path("/home/sean-campbell/github/willow-1.9")
 
@@ -34,3 +34,22 @@ def test_apply_hooks_writes_block(tmp_path):
     content = json.loads(settings.read_text())
     assert "SessionStart" in content["hooks"]
     assert content["model"] == "sonnet"
+
+
+def test_apply_plugin_writes_enabled_plugins(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"model": "sonnet", "enabledPlugins": {}}))
+    skills_path = PACKAGE_ROOT / "willow" / "fylgja" / "skills"
+    apply_plugin(settings_path=settings, skills_path=skills_path, dry_run=False)
+    content = json.loads(settings.read_text())
+    assert any("fylgja" in k for k in content["enabledPlugins"])
+    assert content["model"] == "sonnet"
+
+
+def test_apply_plugin_dry_run_does_not_write(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"enabledPlugins": {}}))
+    skills_path = PACKAGE_ROOT / "willow" / "fylgja" / "skills"
+    apply_plugin(settings_path=settings, skills_path=skills_path, dry_run=True)
+    content = json.loads(settings.read_text())
+    assert content == {"enabledPlugins": {}}

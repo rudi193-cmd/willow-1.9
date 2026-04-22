@@ -63,13 +63,37 @@ def apply_hooks(settings_path: Path = _DEFAULT_SETTINGS,
     print(f"[install] Hooks written to {settings_path}")
 
 
+def apply_plugin(settings_path: Path = _DEFAULT_SETTINGS,
+                 skills_path: Path = None,
+                 dry_run: bool = False) -> None:
+    if skills_path is None:
+        skills_path = _PACKAGE_ROOT / "willow" / "fylgja" / "skills"
+    plugin_key = f"fylgja@{skills_path}"
+    settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+
+    if dry_run:
+        print(f"[install] Dry run — would add to enabledPlugins: {plugin_key!r}")
+        return
+
+    plugins = settings.get("enabledPlugins", {})
+    plugins[plugin_key] = True
+    settings["enabledPlugins"] = plugins
+    tmp = settings_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(settings, indent=2))
+    tmp.replace(settings_path)
+    print(f"[install] Plugin registered: {plugin_key}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Wire Fylgja into Claude Code settings.json")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--settings", type=Path, default=_DEFAULT_SETTINGS)
     parser.add_argument("--package-root", type=Path, default=_PACKAGE_ROOT)
+    parser.add_argument("--plugin", action="store_true", help="Also register fylgja@local plugin")
     args = parser.parse_args()
     apply_hooks(settings_path=args.settings, package_root=args.package_root, dry_run=args.dry_run)
+    if args.plugin:
+        apply_plugin(settings_path=args.settings, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
