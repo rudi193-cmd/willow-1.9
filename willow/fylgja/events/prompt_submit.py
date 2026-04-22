@@ -16,7 +16,7 @@ from willow.fylgja._state import (
     get_turn_count, is_first_turn, get_trust_state, save_trust_state,
 )
 
-ANCHOR_INTERVAL = 10
+ANCHOR_INTERVAL = 25
 ANCHOR_CACHE = Path.home() / ".willow" / "session_anchor.json"
 STATE_FILE = Path.home() / ".willow" / "anchor_state.json"
 TURNS_FILE = Path.home() / "agents" / AGENT / "cache" / "turns.txt"
