@@ -197,7 +197,6 @@ def init_schema(conn: "psycopg2.connection") -> None:
 class PgBridge:
     def __init__(self):
         self.conn = _connect()
-        init_schema(self.conn)
         self._last_ingest_error = None
 
     # ── Connection resilience ─────────────────────────────────────────────────

@@ -103,8 +103,9 @@ from willow_store import WillowStore
 
 # ── Postgres bridge ───────────────────────────────────────────────────────────
 try:
-    from pg_bridge import try_connect, PgBridge
+    from pg_bridge import try_connect, PgBridge, init_schema
     pg = PgBridge()
+    init_schema(pg.conn)
 except Exception as _pg_init_err:
     pg = None
     print(f"[pg] PgBridge init failed: {_pg_init_err}", file=sys.stderr)
