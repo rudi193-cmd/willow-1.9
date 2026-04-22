@@ -9,6 +9,7 @@
 #   ./willow.sh update       — check for updates and apply if available
 #   ./willow.sh export       — dump user data to ~/.willow/export.json
 #   ./willow.sh purge <proj> — delete a project namespace entirely
+#   ./willow.sh ledger [proj] — show FRANK's ledger (optional project filter)
 #   ./willow.sh verify       — verify all SAFE manifests
 
 set -euo pipefail
@@ -137,6 +138,27 @@ print(f'  Deleted {count} KB edges for project: {project}')
 "
         ;;
 
+    ledger)
+        echo "Willow 1.9 — FRANK's Ledger"
+        LEDGER_PROJECT="${2:-}"
+        LEDGER_PROJECT="${LEDGER_PROJECT}" WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" -c "
+import sys, os, json
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.pg_bridge import PgBridge
+bridge = PgBridge()
+project = os.environ.get('LEDGER_PROJECT') or None
+entries = bridge.ledger_read(project=project, limit=20)
+result = bridge.ledger_verify()
+print(f'  Chain: {\"VALID\" if result[\"valid\"] else \"BROKEN\"}  Entries: {result[\"count\"]}')
+print()
+for e in entries:
+    ts = e['created_at'].strftime('%Y-%m-%d %H:%M') if hasattr(e['created_at'], 'strftime') else str(e['created_at'])[:16]
+    content = e.get('content') or {}
+    note = content.get('note', json.dumps(content)[:60])
+    print(f'  [{ts}] {e[\"project\"]:20s} {e[\"event_type\"]:15s} {note}')
+"
+        ;;
+
     verify)
         echo "Willow 1.9 — manifest verification"
         SAFE_ROOT="${WILLOW_SAFE_ROOT}"
@@ -158,7 +180,7 @@ print(f'  Deleted {count} KB edges for project: {project}')
         ;;
 
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|verify]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|ledger [project]|verify]"
         exit 1
         ;;
 esac

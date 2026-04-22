@@ -169,3 +169,43 @@ class PgBridge:
                   prev_hash, new_hash))
         self.conn.commit()
         return record_id
+
+    def ledger_read(self, project=None, limit=50):
+        """Read ledger entries, newest first, optionally filtered by project."""
+        import psycopg2.extras as _ex
+        filters = []
+        params = []
+        if project:
+            filters.append("project = %s")
+            params.append(project)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        params.append(limit)
+        with self.conn.cursor(cursor_factory=_ex.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT * FROM frank_ledger {where} ORDER BY created_at DESC LIMIT %s",
+                params,
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def ledger_verify(self):
+        """Verify hash chain integrity. Returns {valid, broken_at, count}."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, event_type, content, prev_hash, hash "
+                "FROM frank_ledger ORDER BY created_at ASC"
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return {"valid": True, "broken_at": None, "count": 0}
+        prev = None
+        for record_id, event_type, content, prev_hash, stored_hash in rows:
+            payload = json.dumps(
+                {"event_type": event_type, "content": content}, sort_keys=True
+            )
+            expected = hashlib.sha256(f"{prev or ''}{payload}".encode()).hexdigest()
+            if expected != stored_hash:
+                return {"valid": False, "broken_at": record_id, "count": len(rows)}
+            if prev_hash != prev:
+                return {"valid": False, "broken_at": record_id, "count": len(rows)}
+            prev = stored_hash
+        return {"valid": True, "broken_at": None, "count": len(rows)}
