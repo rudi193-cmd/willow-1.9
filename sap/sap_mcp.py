@@ -88,6 +88,16 @@ _INFRA_IDS = frozenset({
     "willow", "ada", "steve",                                      # OPERATOR
 })
 
+# ── Gleipnir — behavioral rate limiting (W19GL) ───────────────────────────────
+try:
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    from core.gleipnir import check as _gleipnir_check
+    _GLEIPNIR = True
+except ImportError:
+    _GLEIPNIR = False
+    def _gleipnir_check(app_id, tool_name): return True, ""
+
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
 
@@ -734,6 +744,15 @@ def _qualifies_as_flag(record: dict, deviation: float) -> bool:
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     try:
         app_id = arguments.get("app_id", "")
+        if _GLEIPNIR:
+            _gl_allowed, _gl_reason = _gleipnir_check(app_id, name)
+            if not _gl_allowed:
+                return [types.TextContent(type="text", text=json.dumps(
+                    {"error": "rate_limited", "reason": _gl_reason}
+                ))]
+            if _gl_reason:
+                import sys as _sys
+                print(f"[gleipnir] {app_id}: {_gl_reason}", file=_sys.stderr)
         if _SAP_GATE and app_id not in _INFRA_IDS:
             if not sap_authorized(app_id):
                 return [types.TextContent(type="text", text=json.dumps({
