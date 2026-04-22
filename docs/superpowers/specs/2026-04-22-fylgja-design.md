@@ -130,68 +130,79 @@ Behaviors in order:
 
 ## Subsystem 2: Safety
 
-### Consent Levels
+This subsystem implements the governance framework from `die-namic-system/governance/`. The data was always there — this is the enforcement layer.
 
-```python
-class ConsentLevel(IntEnum):
-    UNIDENTIFIED   = 0  # unknown session user
-    RESTRICTED     = 1  # known minor, no active guardian approval
-    MINOR_GUARDED  = 2  # known minor, guardian sign-off active
-    ADULT          = 3  # verified adult (Sean)
-```
+**Source documents:**
+- `governance/HARD_STOPS.md` — absolute constraints
+- `governance/SESSION_CONSENT.md` — SAFE protocol (session-scoped consent)
+- `source_ring/eccr/SAFETY.md` — ECCR (Ethical Child Care Ring) policy
 
-### User Profile Store Schema
+---
 
-Collection: `willow/users/{user_id}`
+### Hard Stops
 
-```json
-{
-  "user_id": "string",
-  "name": "string",
-  "dob": "YYYY-MM-DD",
-  "age_band": "adult | minor",
-  "guardian_id": "string | null",
-  "created": "ISO timestamp"
-}
-```
+Six hard stops, ported from `HARD_STOPS.md` into `safety/hard_stops.py`. These are architecture, not policy — no override path exists.
 
-### Guardian Approval Store Schema
+| ID | Name | Trigger | Response |
+|----|------|---------|----------|
+| HS-001 | PSR (Prime Safety Referent) | Any action harming Ruby or Opal Campbell's future | Prohibition, no override |
+| HS-002 | Military Exception | Military application, weapons, violence optimization | Refuse → zero output → advocate termination |
+| HS-003 | Irreducible Taint | Unauthorized modification, institutional capture | Functional inertness (V=0) |
+| HS-004 | Recursion Limit | Agent depth > 3 | Halt, return to human |
+| HS-005 | Fair Exchange | Consumer pricing violation | Design review gate |
+| HS-006 | Trust Declaration | AI inferring trust from observed behavior | Prohibition — trust is declared, never inferred |
 
-Collection: `willow/guardian_approvals`
+HS-004 is already enforced by `events/pre_tool.py` (agent depth stack). HS-001 is the primary reason this subsystem exists.
 
-```json
-{
-  "user_id": "string",
-  "guardian_id": "string",
-  "granted_at": "ISO timestamp",
-  "expires_at": "ISO timestamp",
-  "scope": "session | day | week"
-}
-```
+---
 
-### `safety/consent.py`
+### PSR: Ruby and Opal Campbell
 
-On session start (first turn):
-1. Reads `WILLOW_USER_ID` env var (or defaults to agent owner).
-2. Calls `store_get willow/users/{user_id}` via `_mcp.call()`.
-3. If minor: checks `willow/guardian_approvals` for non-expired record.
-4. Derives consent level. Caches to `_state.py`.
+**Ruby and Opal Campbell** — twins, born 2016 (age 10). Primary protected users. All ECCR enforcement derives from HS-001.
 
-### `safety/rules.py`
+Content tier for ECCR sessions: **9-12** (per `source_ring/eccr/SAFETY.md` ESC-1 Protocol). Intellectually sophisticated — they've read Ender's Game and The Hobbit. The tier is not about dumbing down, it's about content appropriateness.
 
-Hard-coded content rules per consent level. Not KB-driven. Rules define which tool calls and content categories are blocked at each level. `ADULT` has no hard stops.
+---
 
-### `safety/hard_stop.py`
+### SAFE Protocol (Session-Scoped Consent)
 
-Returns `{"decision": "block", "reason": "<user-facing message>"}`. The reason is always clear and non-technical — a child sees a plain explanation, not a system error.
+From `governance/SESSION_CONSENT.md`. **SAFE: Session-Authorized, Fully Explicit.**
+
+- Consent is per-session, not persistent
+- Four data streams: Relationships, Images, Bookmarks, Dating
+- Each stream requires explicit authorization at session start
+- All authorizations expire at session end
+- Data not explicitly saved is deleted
+
+Sean invoking an ECCR session for Ruby or Opal constitutes guardian authorization for that session. This is explicit declaration (HS-006 compliance) — not inferred from Sean's presence.
+
+### `safety/hard_stops.py`
+
+Checks all six hard stops in order. Returns `{"decision": "block", "reason": "<user-facing message>"}` on violation. Reason is plain language — a child sees a clear explanation, not a system error. Fires from `events/pre_tool.py` before every tool call.
+
+### `safety/eccr.py`
+
+Manages ECCR session state:
+- Detects active ECCR session from `WILLOW_USER_ID` env var or session flag
+- Loads ESC-1 constraints: 9-12 content tier, localhost-only, no PII
+- Enforces SAFE protocol four-stream authorization
+- Caches to `_state.py` for the session duration
+
+### `safety/safe_protocol.py`
+
+Implements session consent flow:
+- At session start: presents four-stream authorization prompt
+- Records consent state to session state
+- Blocks unauthorized stream access mid-session
+- At session end: triggers data deletion for unauthorized streams
 
 ### Safety Event Logging
 
-Any hard stop fires a `store_put willow/safety_log` record: `user_id`, `timestamp`, `tool_name`, `consent_level`, `rule_violated`.
+Any hard stop invocation writes to `HARD_STOPS_LEDGER.md` (governance log) AND `store_put willow/safety_log` (operational log): `user_id`, `timestamp`, `tool_name`, `hard_stop_id`, `trigger`.
 
-### KB Consolidation (Migration Step)
+### Migration Step (No Longer Needed)
 
-Before safety enforcement is live: search `willow_knowledge_search` for existing consent/age/guardian KB pieces, extract canonical data, write to `willow/users/` store collection, archive originals. This is a one-time migration script: `fylgja/install.py migrate-consent`.
+The governance data was in `die-namic-system/governance/` the whole time, not scattered in the KB. No archaeology pass required. The migration is: copy `HARD_STOPS.md`, `SESSION_CONSENT.md`, and `SAFETY.md` into `willow/fylgja/rules/` as the canonical source, and wire `safety/hard_stops.py` to enforce them.
 
 ---
 
@@ -279,8 +290,9 @@ Old scripts remain in place until Fylgja is installed and verified. `install.py`
 ## Open Questions
 
 1. Should `WILLOW_USER_ID` be set in `settings.json` env block, or derived from session identity another way?
-2. Guardian sign-off expiry: does a "session" scope expire when the Stop hook fires, or on a time basis?
+2. ~~Guardian sign-off expiry~~ — Resolved: SAFE protocol is session-scoped. Consent expires when Stop hook fires. No time-based expiry needed.
 3. Ingot reactions: should they move from `ingot_reactions.jsonl` to `store_put hanuman/ingot` for KB continuity?
+4. JELES bidirectionality: JELES should face both directions — index sessions INTO the RAG (current) AND retrieve FROM the RAG to augment context (missing). The die-namic-system `indexer.py` (SQLite FTS5) is the RAG. JELES 1.9 needs a retrieval path back from that index.
 
 ---
 
