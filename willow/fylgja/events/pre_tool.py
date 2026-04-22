@@ -18,19 +18,8 @@ MAX_DEPTH = int(os.environ.get("WILLOW_AGENT_MAX_DEPTH", "3"))
 DEPTH_FILE = Path("/tmp/willow-agent-depth-stack.txt")
 
 BASH_BLOCKS = [
-    (r"\bpsql\b|\bpg_dump\b|\bpg_restore\b",
-     "Direct Postgres access is not allowed. Use MCP: store_get / store_list for store reads, "
-     "willow_knowledge_search for KB reads, store_put / willow_knowledge_ingest for writes."),
     (r"\bsqlite3\b",
-     "Direct SQLite access is not allowed. Use MCP: store_get / store_list, or Glob + Read for schema inspection."),
-    (r"\bcat\s+[\w/~\.\"]",
-     "File read → use the Read tool."),
-    (r"(?:^|[;&])\s*grep\s+|(?:^|[;&])\s*rg\s+",
-     "Content search → use the Grep tool."),
-    (r"\bfind\s+[\w/~\.\"]",
-     "File search → use the Glob tool."),
-    (r"^\s*ls\s*$|\bls\s+[\w/~\.\"]",
-     "File listing / discovery → use the Glob tool."),
+     "Direct SQLite access is not allowed. Use MCP: store_get / store_list, or Read for schema inspection."),
 ]
 
 F5_PROSE_TOOLS = {
