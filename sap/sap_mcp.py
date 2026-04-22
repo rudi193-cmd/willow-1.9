@@ -89,17 +89,14 @@ _INFRA_IDS = frozenset({
 })
 
 # ── Gleipnir — behavioral rate limiting (W19GL) ───────────────────────────────
+# _WILLOW_CORE (core/) is on sys.path — import gleipnir directly, not core.gleipnir,
+# to avoid collision with sap.core registered in sys.modules by the gate import above.
 try:
-    import os as _os, sys as _sys
-    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-    from core.gleipnir import check as _gleipnir_check
+    from gleipnir import check as _gleipnir_check
     _GLEIPNIR = True
-except ImportError as _gl_err:
+except ImportError:
     _GLEIPNIR = False
     def _gleipnir_check(app_id, tool_name): return True, ""
-    print(f"[gleipnir] import failed: {_gl_err}", file=sys.stderr)
-
-print(f"[gleipnir] _GLEIPNIR={_GLEIPNIR}", file=sys.stderr)
 
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
