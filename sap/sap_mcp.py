@@ -108,6 +108,19 @@ try:
 except Exception:
     pg = None
 
+# Cached 1.9 PgBridge for tools that need 1.9 methods (knowledge_at, etc.)
+_pg19 = None
+
+def _get_pg19():
+    global _pg19
+    if _pg19 is None:
+        try:
+            from core.pg_bridge import PgBridge as _PB19
+            _pg19 = _PB19()
+        except Exception:
+            pass
+    return _pg19
+
 # ── Config ────────────────────────────────────────────────────────────────────
 STORE_ROOT = os.environ.get("WILLOW_STORE_ROOT", str(_SAP_ROOT / "store"))
 HANDOFF_DB = os.environ.get(
@@ -904,18 +917,20 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 }
 
         elif name == "willow_knowledge_at":
-            from core.pg_bridge import PgBridge as _PgBridge19
-            from datetime import datetime as _dt
-            _bridge = _PgBridge19()
-            _raw_time = arguments["at_time"].replace("Z", "+00:00")
-            _at = _dt.fromisoformat(_raw_time)
-            results = _bridge.knowledge_at(
-                arguments["query"],
-                at_time=_at,
-                project=arguments.get("project"),
-                limit=arguments.get("limit", 20),
-            )
-            result = {"results": results, "count": len(results), "at_time": arguments["at_time"]}
+            _bridge19 = _get_pg19()
+            if not _bridge19:
+                result = {"error": "not_available", "reason": "Postgres not connected"}
+            else:
+                from datetime import datetime as _dt
+                _raw_time = arguments["at_time"].replace("Z", "+00:00")
+                _at = _dt.fromisoformat(_raw_time)
+                results = _bridge19.knowledge_at(
+                    arguments["query"],
+                    at_time=_at,
+                    project=arguments.get("project"),
+                    limit=arguments.get("limit", 20),
+                )
+                result = {"results": results, "count": len(results), "at_time": arguments["at_time"]}
 
         elif name == "willow_memory_check":
             from sap.core.memory_gate import check_candidate

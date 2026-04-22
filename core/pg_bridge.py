@@ -8,7 +8,7 @@ Schema is correct from first CREATE TABLE. No ALTER TABLE ever.
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 try:
@@ -152,8 +152,7 @@ class PgBridge:
         This is an implementation artefact of local deployment — it does not affect
         the invalid_at (close) boundary, which is always an explicit past timestamp.
         """
-        from datetime import timedelta as _td
-        at_time_upper = at_time + _td(seconds=5)
+        at_time_upper = at_time + timedelta(seconds=5)
         filters = [
             "(title ILIKE %s OR summary ILIKE %s)",
             "valid_at <= %s",
