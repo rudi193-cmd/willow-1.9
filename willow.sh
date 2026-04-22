@@ -10,6 +10,7 @@
 #   ./willow.sh export       — dump user data to ~/.willow/export.json
 #   ./willow.sh purge <proj> — delete a project namespace entirely
 #   ./willow.sh ledger [proj] — show FRANK's ledger (optional project filter)
+#   ./willow.sh valhalla     — collect DPO training pairs to ~/.willow/valhalla/
 #   ./willow.sh verify       — verify all SAFE manifests
 
 set -euo pipefail
@@ -242,6 +243,26 @@ print('  Restore complete.')
         echo ""
         ;;
 
+    valhalla)
+        echo "Willow 1.9 — Valhalla collection"
+        echo "  Scanning KB for DPO pair candidates..."
+        WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" -c "
+import sys, os
+sys.path.insert(0, '${WILLOW_ROOT}')
+os.environ['WILLOW_PG_DB'] = '${WILLOW_PG_DB}'
+from core.pg_bridge import PgBridge
+from core.willow_store import WillowStore
+from core.valhalla import collect_dpo_pairs
+bridge = PgBridge()
+store = WillowStore()
+count = collect_dpo_pairs(bridge, store)
+print(f'  Pairs collected: {count}')
+print(f'  Output: ~/.willow/valhalla/dpo_pairs.jsonl')
+print()
+print('  The Einherjar grow stronger.')
+"
+        ;;
+
     verify)
         echo "Willow 1.9 — manifest verification"
         SAFE_ROOT="${WILLOW_SAFE_ROOT}"
@@ -263,7 +284,7 @@ print('  Restore complete.')
         ;;
 
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|verify]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify]"
         exit 1
         ;;
 esac
