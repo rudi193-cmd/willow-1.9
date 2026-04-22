@@ -9,7 +9,6 @@ Each collection is a SQLite database at {root}/{collection}.db.
 import json
 import os
 import sqlite3
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -45,8 +44,7 @@ class WillowStore:
             deviation: float = 0.0) -> tuple:
         rid = record_id or record.get("_id") or record.get("id") or record.get("b17")
         if not rid:
-            rid = uuid.uuid4().hex[:8]
-            record = {**record, "_id": rid}
+            raise ValueError(f"record must have an 'id', '_id', or 'b17' field — got keys: {list(record.keys())}")
         conn = self._conn(collection)
         conn.execute(
             "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
