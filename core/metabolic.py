@@ -20,6 +20,19 @@ STORE_ROOT = Path(os.environ.get("WILLOW_STORE_ROOT",
                                   str(Path.home() / ".willow" / "store")))
 WILLOW_ROOT = Path(__file__).parent.parent
 
+# Ensure willow-1.9 is first on path — strip any willow-1.7 entries
+sys.path = [str(WILLOW_ROOT)] + [p for p in sys.path if "willow-1.7" not in p]
+
+
+def _load_pg_bridge():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "pg_bridge_19", WILLOW_ROOT / "core" / "pg_bridge.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 def compost_pass(dry_run: bool = False) -> int:
     """
@@ -83,10 +96,7 @@ def community_pass(dry_run: bool = False) -> int:
     Returns count of community nodes written. W19CD.
     """
     try:
-        sys.path.insert(0, str(WILLOW_ROOT))
-        import importlib
-        import core.pg_bridge as pgb
-        importlib.reload(pgb)
+        pgb = _load_pg_bridge()
         bridge = pgb.PgBridge()
     except Exception:
         return 0
@@ -135,10 +145,7 @@ def measure_heartbeat() -> float:
     Higher = more compression = more learning. Returns float 0.0–1.0. W19HB.
     """
     try:
-        sys.path.insert(0, str(WILLOW_ROOT))
-        import importlib
-        import core.pg_bridge as pgb
-        importlib.reload(pgb)
+        pgb = _load_pg_bridge()
         bridge = pgb.PgBridge()
     except Exception:
         return 0.5
