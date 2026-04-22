@@ -42,4 +42,7 @@ jobs:
           WILLOW_PG_USER: postgres
           WILLOW_PG_HOST: localhost
           WILLOW_PG_PORT: 5432
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
           PGPASSWORD: postgres

@@ -70,7 +70,14 @@ def test_get_bridge_returns_degraded_when_pg_down():
 def test_get_bridge_returns_pg_when_available():
     from core.graceful import get_bridge
     import os
-    bridge = get_bridge(
-        pg_dsn=f"dbname=willow_19 user={os.environ.get('USER', 'sean-campbell')}"
-    )
+    db = os.environ.get("WILLOW_PG_DB", "willow_19_test")
+    user = os.environ.get("WILLOW_PG_USER", os.environ.get("USER", ""))
+    host = os.environ.get("WILLOW_PG_HOST", "")
+    port = os.environ.get("WILLOW_PG_PORT", "")
+    dsn = f"dbname={db} user={user}"
+    if host:
+        dsn += f" host={host}"
+    if port:
+        dsn += f" port={port}"
+    bridge = get_bridge(pg_dsn=dsn)
     assert bridge.degraded is False
