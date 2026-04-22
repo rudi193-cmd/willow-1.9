@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "willow": {
+      "command": "/path/to/willow-1.9/willow.sh",
+      "env": {
+        "WILLOW_STORE_ROOT": "/home/USERNAME/.willow/store",
+        "WILLOW_PG_DB": "willow_19",
+        "WILLOW_PG_USER": "USERNAME",
+        "WILLOW_HANDOFF_DB": "/home/USERNAME/agents/AGENT_NAME/index/handoffs/handoffs.db"
+      }
+    },
+    "grove": {
+      "command": "python3",
+      "args": ["-m", "grove.mcp_local"],
+      "cwd": "/path/to/safe-app-grove",
+      "env": {
+        "WILLOW_PG_DB": "willow_19",
+        "WILLOW_PG_USER": "USERNAME",
+        "PYTHONPATH": "/path/to/safe-app-grove"
+      }
+    }
+  }
+}
