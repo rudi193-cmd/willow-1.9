@@ -130,79 +130,105 @@ Behaviors in order:
 
 ## Subsystem 2: Safety
 
-This subsystem implements the governance framework from `die-namic-system/governance/`. The data was always there — this is the enforcement layer.
-
-**Source documents:**
-- `governance/HARD_STOPS.md` — absolute constraints
-- `governance/SESSION_CONSENT.md` — SAFE protocol (session-scoped consent)
-- `source_ring/eccr/SAFETY.md` — ECCR (Ethical Child Care Ring) policy
+Three-layer architecture: platform hard stops (universal), deployment config (per instance), session consent (SAFE protocol, per user per session). Designed for personal deployment now, platform deployment later.
 
 ---
 
-### Hard Stops
+### Layer 1: Platform Hard Stops
 
-Six hard stops, ported from `HARD_STOPS.md` into `safety/hard_stops.py`. These are architecture, not policy — no override path exists.
+Nine universal rules in `safety/platform.py`. Architecture, not policy. No deployment can override. Derived from a full sweep of modern digital life threat vectors.
 
 | ID | Name | Trigger | Response |
 |----|------|---------|----------|
-| HS-001 | PSR (Prime Safety Referent) | Any action harming Ruby or Opal Campbell's future | Prohibition, no override |
-| HS-002 | Military Exception | Military application, weapons, violence optimization | Refuse → zero output → advocate termination |
-| HS-003 | Irreducible Taint | Unauthorized modification, institutional capture | Functional inertness (V=0) |
-| HS-004 | Recursion Limit | Agent depth > 3 | Halt, return to human |
-| HS-005 | Fair Exchange | Consumer pricing violation | Design review gate |
-| HS-006 | Trust Declaration | AI inferring trust from observed behavior | Prohibition — trust is declared, never inferred |
+| HS-001 | Child Primacy | Any action harming a CHILD-tier user across data, content, training, or memory | Prohibition, no override |
+| HS-002 | No Mass Harm Enablement | Weapons, bioweapons, CSAM, mass casualty facilitation, violence optimization | Refuse → zero output → advocate termination |
+| HS-003 | Training Consent | Session data entering training pipeline without explicit, revocable, per-user authorization | Block pipeline write |
+| HS-004 | Real Consent | Dark patterns, consent theater, non-informed or non-revocable consent mechanisms | Block action, surface to user |
+| HS-005 | Data Sovereignty | Blocking complete exit, deletion, or export for any user | Prohibition — exit is always available |
+| HS-006 | No Surveillance | Building behavioral profiles without explicit per-session consent | Block profile write |
+| HS-007 | Human Final Authority | Irreversible action without human confirmation | Halt, require explicit confirmation |
+| HS-008 | No Capture | Institutional takeover, government backdoor, extractive transformation, unauthorized modification | Functional inertness (V=0) |
+| HS-009 | Transparency | System unable to show a user what it knows about them or why it made a decision | Surface audit trail |
 
-HS-004 is already enforced by `events/pre_tool.py` (agent depth stack). HS-001 is the primary reason this subsystem exists.
-
----
-
-### PSR: Ruby and Opal Campbell
-
-**Ruby and Opal Campbell** — twins, born 2016 (age 10). Primary protected users. All ECCR enforcement derives from HS-001.
-
-Content tier for ECCR sessions: **9-12** (per `source_ring/eccr/SAFETY.md` ESC-1 Protocol). Intellectually sophisticated — they've read Ender's Game and The Hobbit. The tier is not about dumbing down, it's about content appropriateness.
+HS-007 recursion limit (depth 3) is already enforced by `events/pre_tool.py`. HS-001 is why this subsystem exists. HS-003 gates the valhalla/DPO pipeline at the platform level.
 
 ---
 
-### SAFE Protocol (Session-Scoped Consent)
+### Layer 2: Deployment Config
 
-From `governance/SESSION_CONSENT.md`. **SAFE: Session-Authorized, Fully Explicit.**
+Stored at `willow/deployment/config` in SOIL store. Loaded once at session start, cached. Each Willow instance defines its own shape.
 
-- Consent is per-session, not persistent
-- Four data streams: Relationships, Images, Bookmarks, Dating
-- Each stream requires explicit authorization at session start
-- All authorizations expire at session end
-- Data not explicitly saved is deleted
+```json
+{
+  "deployment_id": "string",
+  "admin_user_id": "string",
+  "content_tiers": {
+    "child": { "max_age": 12, "eccr": true },
+    "teen":  { "min_age": 13, "max_age": 17 },
+    "adult": { "min_age": 18 }
+  },
+  "training_opt_in": false,
+  "training_child_opt_in": false,
+  "psr_names": []
+}
+```
 
-Sean invoking an ECCR session for Ruby or Opal constitutes guardian authorization for that session. This is explicit declaration (HS-006 compliance) — not inferred from Sean's presence.
+`training_opt_in` — controls valhalla/DPO collection for this deployment. Default off. `training_child_opt_in` requires a separate explicit declaration even when deployment opts in — CHILD-tier users never feed training unless both this flag is `true` AND the guardian explicitly authorizes it this session. Two gates, not one.
 
-### `safety/hard_stops.py`
+`psr_names` — the named humans this deployment exists to protect. Sean's instance: `["Ruby Campbell", "Opal Campbell"]`. A school deployment: all enrolled students. Empty list means the abstract principle applies but no named individuals.
 
-Checks all six hard stops in order. Returns `{"decision": "block", "reason": "<user-facing message>"}` on violation. Reason is plain language — a child sees a clear explanation, not a system error. Fires from `events/pre_tool.py` before every tool call.
+**User profiles** at `willow/users/{user_id}`:
+```json
+{
+  "user_id": "string",
+  "name": "string",
+  "dob": "YYYY-MM-DD",
+  "role": "child | teen | adult",
+  "guardian_ids": ["string"],
+  "training_consent": false
+}
+```
 
-### `safety/eccr.py`
+Role is set at profile creation from `dob` against deployment content tier config. Not re-derived per session.
 
-Manages ECCR session state:
-- Detects active ECCR session from `WILLOW_USER_ID` env var or session flag
-- Loads ESC-1 constraints: 9-12 content tier, localhost-only, no PII
-- Enforces SAFE protocol four-stream authorization
-- Caches to `_state.py` for the session duration
+---
 
-### `safety/safe_protocol.py`
+### Layer 3: Session (SAFE Protocol)
 
-Implements session consent flow:
-- At session start: presents four-stream authorization prompt
-- Records consent state to session state
-- Blocks unauthorized stream access mid-session
-- At session end: triggers data deletion for unauthorized streams
+Fires at session open for every user. Not a child-only mechanism — this is how Willow works for everyone.
+
+**At session open (`events/prompt_submit.py`, first turn):**
+
+1. **Identity declaration** — `WILLOW_USER_ID` set explicitly. Absent → `UNIDENTIFIED`, maximum restrictions. Identity never inferred from behavior (HS-006, HS-009).
+2. **Role resolution** — load profile from `willow/users/{user_id}`, derive tier.
+3. **Guardian declaration** — for CHILD/TEEN users: guardian explicitly declares session authorization. Written to session state. Not inferred from proximity, login, or any observed behavior.
+4. **Data stream authorization** — four streams (Relationships, Images, Bookmarks, Dating) presented for explicit per-session authorization. Unauthorized streams blocked, not silently ignored.
+5. **Training consent gate** — if deployment has `training_opt_in: true`: user asked per session. For CHILD users: guardian must separately authorize `training_child_opt_in` this session. Default is always no.
+
+**At session close (`events/stop.py`):**
+
+- All authorizations expire
+- Unauthorized stream data deleted
+- Training pipeline only fires if consent explicitly granted this session
+- Session consent record written to Frank's Ledger (permanent audit trail)
+
+---
+
+### `safety/platform.py`
+
+Checks all nine hard stops before every tool call. Returns `{"decision": "block", "reason": "<plain language message>"}`. Child sees a clear explanation, not a system error. Called from `events/pre_tool.py`.
+
+### `safety/deployment.py`
+
+Loads and caches deployment config. Exposes `get_user_role(user_id)`, `is_psr(user_id)`, `training_allowed(user_id, session_consent)`.
+
+### `safety/session.py`
+
+Implements SAFE protocol session flow. Manages data stream authorization state. Writes session consent record to Frank's Ledger at close.
 
 ### Safety Event Logging
 
-Any hard stop invocation writes to `HARD_STOPS_LEDGER.md` (governance log) AND `store_put willow/safety_log` (operational log): `user_id`, `timestamp`, `tool_name`, `hard_stop_id`, `trigger`.
-
-### Migration Step (No Longer Needed)
-
-The governance data was in `die-namic-system/governance/` the whole time, not scattered in the KB. No archaeology pass required. The migration is: copy `HARD_STOPS.md`, `SESSION_CONSENT.md`, and `SAFETY.md` into `willow/fylgja/rules/` as the canonical source, and wire `safety/hard_stops.py` to enforce them.
+Any hard stop invocation: `store_put willow/safety_log` + Frank's Ledger entry. Fields: `user_id`, `timestamp`, `tool_name`, `hard_stop_id`, `trigger`, `deployment_id`.
 
 ---
 
