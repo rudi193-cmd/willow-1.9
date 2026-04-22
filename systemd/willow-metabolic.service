@@ -1,0 +1,16 @@
+[Unit]
+Description=Willow Metabolic Service — Norn Scheduler
+Documentation=https://github.com/rudi193-cmd/willow-1.9
+Requires=willow-metabolic.socket
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'WILLOW_ROOT="${WILLOW_ROOT:-%h/github/willow-1.9}" && WILLOW_PG_DB="${WILLOW_PG_DB:-willow_19}" python3 "$WILLOW_ROOT/core/metabolic.py"'
+Environment=WILLOW_STORE_ROOT=%h/.willow/store
+Environment=WILLOW_PG_DB=willow_19
+StandardInput=socket
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

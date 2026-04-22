@@ -1,0 +1,10 @@
+[Unit]
+Description=Willow Metabolic Service Socket
+Documentation=https://github.com/rudi193-cmd/willow-1.9
+
+[Socket]
+ListenStream=%h/.willow/metabolic.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
