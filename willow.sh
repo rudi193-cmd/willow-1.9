@@ -159,6 +159,45 @@ for e in entries:
 "
         ;;
 
+    backup)
+        echo "Willow 1.9 — backup"
+        WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" -c "
+import sys, os, json
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.backup import create_backup
+backup_path = create_backup(pg_db='${WILLOW_PG_DB}')
+manifest = json.loads((backup_path.parent / 'manifest.json').read_text())
+print(f'  Backup:   {backup_path.parent}')
+print(f'  Version:  {manifest[\"version\"]}')
+print(f'  Postgres: {\"included\" if manifest[\"pg_included\"] else \"not included (pg_dump unavailable)\"}')
+print()
+print('  Snorri Sturluson would approve.')
+"
+        ;;
+
+    restore)
+        BACKUP_PATH="${2:-}"
+        if [[ -z "${BACKUP_PATH}" ]]; then
+            echo "Usage: willow.sh restore <path-to-backup-directory>"
+            echo "Backups live at: ~/.willow/backups/"
+            exit 1
+        fi
+        echo "  Restoring from: ${BACKUP_PATH}"
+        read -rp "  This overwrites ~/.willow/. Type CONFIRM to proceed: " CONFIRM
+        if [[ "${CONFIRM}" != "CONFIRM" ]]; then
+            echo "  Cancelled."
+            exit 0
+        fi
+        RESTORE_PATH="${BACKUP_PATH}" WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" -c "
+import sys, os
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.backup import restore_backup
+from pathlib import Path
+restore_backup(Path(os.environ['RESTORE_PATH']), pg_db='${WILLOW_PG_DB}')
+print('  Restore complete.')
+"
+        ;;
+
     nuke)
         echo ""
         echo "  ╔══════════════════════════════════════════════════════════╗"
