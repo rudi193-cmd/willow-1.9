@@ -1,15 +1,17 @@
 """
 events/pre_tool.py — PreToolUse hook handler.
-MCP guard (Bash + Agent), KB-first read advisory, WWSDN neighborhood scan.
-Safety hard stop gate (stub — wired when safety subsystem is built in Plan 2).
+Safety gate → MCP guard (Bash + Agent) → KB-first advisory → WWSDN.
 """
 import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from willow.fylgja._mcp import call
+from willow.fylgja.safety.platform import check_all as _safety_check_all
+from willow.fylgja.safety.session import get_session_user_id, get_session_role, get_training_consent
 
 AGENT = os.environ.get("WILLOW_AGENT_NAME", "hanuman")
 MAX_DEPTH = int(os.environ.get("WILLOW_AGENT_MAX_DEPTH", "3"))
@@ -140,6 +142,41 @@ def _run_wwsdn(tool_name: str, tool_input: dict) -> None:
         pass
 
 
+def _run_safety_gate(tool_name: str, tool_input: dict, session_id: str) -> str | None:
+    """Run platform hard stops. Returns block JSON string or None."""
+    try:
+        user_id = get_session_user_id()
+        user_role = get_session_role(user_id)
+        training_consented = get_training_consent()
+        result = _safety_check_all(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            user_role=user_role,
+            training_consented=training_consented,
+        )
+        if result:
+            try:
+                call("store_put", {
+                    "app_id": AGENT,
+                    "collection": "willow/safety_log",
+                    "record": {
+                        "id": f"hs-{session_id[:8]}-{abs(hash(tool_name + str(tool_input))) % 99999:05d}",
+                        "user_id": user_id,
+                        "tool_name": tool_name,
+                        "hard_stop_id": result["hard_stop_id"],
+                        "reason": result["reason"],
+                        "session_id": session_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                }, timeout=3)
+            except Exception:
+                pass
+            return json.dumps({"decision": "block", "reason": result["reason"]})
+    except Exception:
+        pass
+    return None
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -149,6 +186,13 @@ def main():
 
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input", {})
+    session_id = payload.get("session_id", "")
+
+    # Safety gate — runs before all other checks
+    block = _run_safety_gate(tool_name, tool_input, session_id)
+    if block:
+        print(block)
+        sys.exit(0)
 
     # Agent tool
     subagent_type = tool_input.get("subagent_type", "")

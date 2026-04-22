@@ -13,6 +13,8 @@ from willow.fylgja._state import (
     AGENT, TRUST_STATE,
     get_turn_count, get_trust_state, save_trust_state,
 )
+from willow.fylgja.safety.deployment import training_allowed
+from willow.fylgja.safety.session import close_session, get_session_user_id, get_training_consent
 
 TURNS_FILE = Path.home() / "agents" / AGENT / "cache" / "turns.txt"
 CURSOR_FILE = Path(f"/tmp/willow-compost-cursor-{AGENT}.txt")
@@ -75,6 +77,9 @@ def _run_compost() -> None:
 
 
 def _run_feedback_pipeline() -> None:
+    user_id = get_session_user_id()
+    if not training_allowed(user_id, session_consent=get_training_consent()):
+        return
     try:
         records = call("store_search", {
             "app_id": AGENT,
@@ -199,6 +204,7 @@ def main():
     _run_handoff_rebuild()
 
     if session_id:
+        close_session(session_id)
         _run_ingot(session_id)
 
     sys.exit(0)
