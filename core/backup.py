@@ -9,11 +9,21 @@ Snorri Sturluson wrote down the myths. willow backup does the same.
   willow restore <path>   — restores from a backup directory
 """
 import json
+import os
 import subprocess
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+
+def _safe_tar_members(tar: tarfile.TarFile, target_dir: Path):
+    """Yield only members that extract inside target_dir — no path traversal."""
+    target = str(target_dir.resolve())
+    for member in tar.getmembers():
+        member_path = str((target_dir / member.name).resolve())
+        if member_path.startswith(target + os.sep) or member_path == target:
+            yield member
 
 
 def create_backup(
@@ -76,7 +86,8 @@ def restore_backup(backup_path: Path, willow_home: Optional[Path] = None,
         raise FileNotFoundError(f"No .tar.gz found in {backup_dir}")
 
     with tarfile.open(tar_files[0], "r:gz") as tar:
-        tar.extractall(home_parent)
+        tar.extractall(home_parent,
+                       members=list(_safe_tar_members(tar, Path(home_parent))))
 
     sql_file = backup_dir / f"{pg_db}.sql"
     if sql_file.exists():

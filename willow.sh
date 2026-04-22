@@ -183,8 +183,8 @@ print('  Snorri Sturluson would approve.')
             exit 1
         fi
         echo "  Restoring from: ${BACKUP_PATH}"
-        read -rp "  This overwrites ~/.willow/. Type CONFIRM to proceed: " CONFIRM
-        if [[ "${CONFIRM}" != "CONFIRM" ]]; then
+        read -rp "  This overwrites ~/.willow/. Type OVERWRITE MY DATA to proceed: " CONFIRM
+        if [[ "${CONFIRM}" != "OVERWRITE MY DATA" ]]; then
             echo "  Cancelled."
             exit 0
         fi
@@ -204,22 +204,22 @@ print('  Restore complete.')
         echo "  ║                  W I L L O W   N U K E                  ║"
         echo "  ╠══════════════════════════════════════════════════════════╣"
         echo "  ║                                                          ║"
-        echo "  ║  This permanently deletes ALL of your Willow data.      ║"
+        echo "  ║  Deletes ~/.willow/ — your local Willow data folder.    ║"
         echo "  ║                                                          ║"
         echo "  ║  What will be destroyed:                                 ║"
-        echo "  ║    • Every project namespace and its knowledge           ║"
-        echo "  ║    • Every session, every atom, every edge               ║"
         echo "  ║    • Your API keys (vault)                               ║"
         echo "  ║    • Your GPG master key                                 ║"
-        echo "  ║    • FRANK's ledger                                      ║"
-        echo "  ║    • Your CMB atom — the first session fossil record     ║"
-        echo "  ║    • All backups stored inside ~/.willow/                ║"
+        echo "  ║    • Local SOIL SQLite store (~/.willow/store/)          ║"
+        echo "  ║    • All local backups (~/.willow/backups/)              ║"
         echo "  ║    • Your telemetry preferences                          ║"
+        echo "  ║    • Version pin and session logs                        ║"
         echo "  ║                                                          ║"
         echo "  ║  What will NOT be touched:                               ║"
         echo "  ║    • The software (this repo stays)                      ║"
         echo "  ║    • ~/SAFE/Applications/ (your SAFE folder)             ║"
         echo "  ║    • The willow_19 Postgres database                     ║"
+        echo "  ║      (knowledge, ledger, CMB atom live there)            ║"
+        echo "  ║      To also wipe Postgres: dropdb willow_19             ║"
         echo "  ║                                                          ║"
         echo "  ║  There is no undo. There is no recovery.                ║"
         echo "  ║  Run 'willow backup' first if you want a copy.          ║"
@@ -263,7 +263,7 @@ print('  Restore complete.')
         ;;
 
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|ledger [project]|verify]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|verify]"
         exit 1
         ;;
 esac

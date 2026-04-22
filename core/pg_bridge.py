@@ -153,7 +153,7 @@ class PgBridge:
 
     def ledger_append(self, project: str, event_type: str, content: dict) -> str:
         # Known limitation: not concurrency-safe — two writers can fork the hash chain.
-        # Single-writer model assumed. Fix in Plan 2 with SELECT FOR UPDATE if needed.
+        # Single-writer model assumed. Tracked for Plan 3: SELECT FOR UPDATE if needed.
         import uuid
         record_id = str(uuid.uuid4())
         with self.conn.cursor() as cur:

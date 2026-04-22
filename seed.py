@@ -210,6 +210,7 @@ def sleipnir(
 
     steps = [
         ("Directories",      lambda: step_1_dirs()),
+        ("Telemetry config", lambda: step_telemetry_init()),
         ("Dependencies",     lambda: step_2_deps()),
         ("GPG key",          lambda: (None if skip_gpg else step_3_gpg())),
         ("Vault",            lambda: step_4_vault()),

@@ -45,7 +45,12 @@ class DegradedBridge:
         pass  # CMB requires Postgres
 
     def ledger_append(self, project: str, event_type: str, content: dict) -> str:
-        return ""  # ledger requires Postgres
+        import warnings
+        warnings.warn(
+            "ledger_append called in degraded mode — audit event silently dropped",
+            RuntimeWarning, stacklevel=2,
+        )
+        return ""  # ledger requires Postgres — caller should check bridge.degraded
 
     def ledger_verify(self) -> dict:
         return {"valid": False, "degraded": True, "count": 0}
@@ -65,19 +70,32 @@ class _LiveBridge:
         return getattr(self._pg, name)
 
 
-def get_bridge(pg_dsn: Optional[str] = None):
-    """
-    Return a live PgBridge (degraded=False) or DegradedBridge (degraded=True).
-    Call this instead of PgBridge() directly wherever degradation matters.
-    """
+_pg_bridge_mod = None  # cached to avoid re-executing module on every get_bridge() call
+
+
+def _load_pg_bridge_mod():
+    global _pg_bridge_mod
+    if _pg_bridge_mod is not None:
+        return _pg_bridge_mod
     import importlib.util
     willow_root = Path(__file__).parent.parent
     spec = importlib.util.spec_from_file_location(
         "pg_bridge_19", willow_root / "core" / "pg_bridge.py"
     )
     mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _pg_bridge_mod = mod
+    return mod
+
+
+def get_bridge(pg_dsn: Optional[str] = None):
+    """
+    Return a live PgBridge (degraded=False) or DegradedBridge (degraded=True).
+    Call this instead of PgBridge() directly wherever degradation matters.
+    The pg_bridge module is cached after first successful load.
+    """
     try:
-        spec.loader.exec_module(mod)
+        mod = _load_pg_bridge_mod()
     except Exception:
         return DegradedBridge()
 
