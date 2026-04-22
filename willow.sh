@@ -159,6 +159,50 @@ for e in entries:
 "
         ;;
 
+    nuke)
+        echo ""
+        echo "  ╔══════════════════════════════════════════════════════════╗"
+        echo "  ║                  W I L L O W   N U K E                  ║"
+        echo "  ╠══════════════════════════════════════════════════════════╣"
+        echo "  ║                                                          ║"
+        echo "  ║  This permanently deletes ALL of your Willow data.      ║"
+        echo "  ║                                                          ║"
+        echo "  ║  What will be destroyed:                                 ║"
+        echo "  ║    • Every project namespace and its knowledge           ║"
+        echo "  ║    • Every session, every atom, every edge               ║"
+        echo "  ║    • Your API keys (vault)                               ║"
+        echo "  ║    • Your GPG master key                                 ║"
+        echo "  ║    • FRANK's ledger                                      ║"
+        echo "  ║    • Your CMB atom — the first session fossil record     ║"
+        echo "  ║    • All backups stored inside ~/.willow/                ║"
+        echo "  ║    • Your telemetry preferences                          ║"
+        echo "  ║                                                          ║"
+        echo "  ║  What will NOT be touched:                               ║"
+        echo "  ║    • The software (this repo stays)                      ║"
+        echo "  ║    • ~/SAFE/Applications/ (your SAFE folder)             ║"
+        echo "  ║    • The willow_19 Postgres database                     ║"
+        echo "  ║                                                          ║"
+        echo "  ║  There is no undo. There is no recovery.                ║"
+        echo "  ║  Run 'willow backup' first if you want a copy.          ║"
+        echo "  ║                                                          ║"
+        echo "  ╚══════════════════════════════════════════════════════════╝"
+        echo ""
+        read -rp "  Type DELETE MY DATA to proceed (anything else cancels): " CONFIRM
+        if [[ "${CONFIRM}" != "DELETE MY DATA" ]]; then
+            echo ""
+            echo "  Cancelled. Nothing was deleted."
+            exit 0
+        fi
+        echo ""
+        echo "  Deleting ~/.willow/ ..."
+        rm -rf "${HOME}/.willow/"
+        echo "  Done."
+        echo ""
+        echo "  Your data is gone. The software remains."
+        echo "  Run python3 seed.py to start fresh."
+        echo ""
+        ;;
+
     verify)
         echo "Willow 1.9 — manifest verification"
         SAFE_ROOT="${WILLOW_SAFE_ROOT}"

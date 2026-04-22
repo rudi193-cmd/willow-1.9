@@ -27,6 +27,18 @@ VERSION = "1.9.0"
 sys.path = [str(WILLOW_ROOT)] + [p for p in sys.path if "willow-1.7" not in p]
 
 
+def step_telemetry_init() -> None:
+    """Write ~/.willow/telemetry.json with opt-in disabled by default."""
+    tel_path = Path.home() / ".willow" / "telemetry.json"
+    if tel_path.exists():
+        return  # never overwrite user's choice
+    tel_path.write_text(json.dumps({
+        "enabled": False,
+        "what": "Nothing is collected when disabled.",
+        "to_enable": "Set enabled: true in this file.",
+    }, indent=2))
+
+
 def step_1_dirs() -> None:
     """Create ~/.willow/ structure and ~/SAFE/Applications/."""
     home = Path.home()
