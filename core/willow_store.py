@@ -96,3 +96,26 @@ class WillowStore:
             parts[-1] = parts[-1].replace(".db", "")
             result.append("/".join(parts))
         return sorted(result)
+
+    def search_all(self, query: str) -> list:
+        """Search across all collections. No deviation column — clean break."""
+        results = []
+        for collection in self.collections():
+            results.extend(self.search(collection, query))
+        return results
+
+    def all(self, collection: str) -> list:
+        """Alias for list() — sap_mcp.py compatibility."""
+        return self.list(collection)
+
+    def update(self, collection: str, record_id: str, record: dict,
+               deviation: float = 0.0) -> tuple:
+        """Update a record. deviation param accepted but not stored — no such column."""
+        existing = self.get(collection, record_id)
+        if existing:
+            existing.update(record)
+            self.put(collection, existing)
+        else:
+            self.put(collection, record)
+        action = "work_quiet"
+        return record_id, action, []
