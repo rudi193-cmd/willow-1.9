@@ -16,7 +16,7 @@ def test_knowledge_table_has_project_column():
     cur = conn.cursor()
     cur.execute("""
         SELECT column_name FROM information_schema.columns
-        WHERE table_name='knowledge' AND column_name='project'
+        WHERE table_schema='public' AND table_name='knowledge' AND column_name='project'
     """)
     assert cur.fetchone() is not None, "knowledge table missing 'project' column"
     conn.close()
@@ -27,7 +27,7 @@ def test_knowledge_table_has_bitemporal_columns():
     cur = conn.cursor()
     cur.execute("""
         SELECT column_name FROM information_schema.columns
-        WHERE table_name='knowledge' AND column_name IN ('valid_at','invalid_at')
+        WHERE table_schema='public' AND table_name='knowledge' AND column_name IN ('valid_at','invalid_at')
     """)
     cols = {row[0] for row in cur.fetchall()}
     assert 'valid_at' in cols
@@ -40,7 +40,7 @@ def test_cmb_atoms_table_exists():
     cur = conn.cursor()
     cur.execute("""
         SELECT table_name FROM information_schema.tables
-        WHERE table_name='cmb_atoms'
+        WHERE table_schema='public' AND table_name='cmb_atoms'
     """)
     assert cur.fetchone() is not None
     conn.close()
@@ -51,7 +51,7 @@ def test_frank_ledger_table_exists():
     cur = conn.cursor()
     cur.execute("""
         SELECT table_name FROM information_schema.tables
-        WHERE table_name='frank_ledger'
+        WHERE table_schema='public' AND table_name='frank_ledger'
     """)
     assert cur.fetchone() is not None
     conn.close()
@@ -62,7 +62,7 @@ def test_knowledge_project_defaults_to_global():
     cur = conn.cursor()
     cur.execute("""
         SELECT column_default FROM information_schema.columns
-        WHERE table_name='knowledge' AND column_name='project'
+        WHERE table_schema='public' AND table_name='knowledge' AND column_name='project'
     """)
     row = cur.fetchone()
     assert row is not None

@@ -130,7 +130,7 @@ class PgBridge:
         self.conn.commit()
 
     def knowledge_search(self, query: str, project: Optional[str] = None,
-                         include_invalid: bool = False) -> list:
+                         include_invalid: bool = False, limit: int = 20) -> list:
         filters = ["(title ILIKE %s OR summary ILIKE %s)"]
         params = [f"%{query}%", f"%{query}%"]
         if project:
@@ -140,7 +140,7 @@ class PgBridge:
             filters.append("invalid_at IS NULL")
         where = " AND ".join(filters)
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(f"SELECT * FROM knowledge WHERE {where} LIMIT 20", params)
+            cur.execute(f"SELECT * FROM knowledge WHERE {where} LIMIT %s", params + [limit])
             return [dict(r) for r in cur.fetchall()]
 
     def cmb_put(self, atom_id: str, content: dict) -> None:
@@ -152,6 +152,8 @@ class PgBridge:
         self.conn.commit()
 
     def ledger_append(self, project: str, event_type: str, content: dict) -> str:
+        # Known limitation: not concurrency-safe — two writers can fork the hash chain.
+        # Single-writer model assumed. Fix in Plan 2 with SELECT FOR UPDATE if needed.
         import uuid
         record_id = str(uuid.uuid4())
         with self.conn.cursor() as cur:

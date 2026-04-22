@@ -123,17 +123,17 @@ print(f'  Collections: {len(data[\"store\"])}')
             echo "  Cancelled."
             exit 0
         fi
-        WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" -c "
+        PURGE_PROJECT="${PROJECT}" WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" -c "
 import sys, os
 sys.path.insert(0, '${WILLOW_ROOT}')
-os.environ['WILLOW_PG_DB'] = '${WILLOW_PG_DB}'
 from core.pg_bridge import PgBridge
+project = os.environ['PURGE_PROJECT']
 bridge = PgBridge()
 with bridge.conn.cursor() as cur:
-    cur.execute('DELETE FROM knowledge WHERE project = %s', ('${PROJECT}',))
+    cur.execute('DELETE FROM knowledge WHERE project = %s', (project,))
     count = cur.rowcount
 bridge.conn.commit()
-print(f'  Deleted {count} KB edges for project: ${PROJECT}')
+print(f'  Deleted {count} KB edges for project: {project}')
 "
         ;;
 
