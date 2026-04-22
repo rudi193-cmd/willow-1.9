@@ -143,6 +143,34 @@ class PgBridge:
             cur.execute(f"SELECT * FROM knowledge WHERE {where} LIMIT %s", params + [limit])
             return [dict(r) for r in cur.fetchall()]
 
+    def knowledge_at(self, query: str, at_time: datetime,
+                     project: Optional[str] = None, limit: int = 20) -> list:
+        """Bi-temporal replay: what did Willow know about query at time at_time?
+
+        A 5-second epsilon is added to at_time for the valid_at upper bound to
+        absorb sub-second clock skew between the Python client and Postgres server.
+        This is an implementation artefact of local deployment — it does not affect
+        the invalid_at (close) boundary, which is always an explicit past timestamp.
+        """
+        from datetime import timedelta as _td
+        at_time_upper = at_time + _td(seconds=5)
+        filters = [
+            "(title ILIKE %s OR summary ILIKE %s)",
+            "valid_at <= %s",
+            "(invalid_at IS NULL OR invalid_at > %s)",
+        ]
+        params = [f"%{query}%", f"%{query}%", at_time_upper, at_time]
+        if project:
+            filters.append("project = %s")
+            params.append(project)
+        where = " AND ".join(filters)
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT * FROM knowledge WHERE {where} LIMIT %s",
+                params + [limit],
+            )
+            return [dict(r) for r in cur.fetchall()]
+
     def cmb_put(self, atom_id: str, content: dict) -> None:
         with self.conn.cursor() as cur:
             cur.execute("""

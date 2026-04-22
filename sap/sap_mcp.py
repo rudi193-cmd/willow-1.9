@@ -716,6 +716,21 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["item_id", "action"],
             },
         ),
+        # ── W19TR — Temporal Replay ───────────────────────────────────────────
+        types.Tool(
+            name="willow_knowledge_at",
+            description="Temporal replay: what did Willow know about query at a specific point in time? Uses bi-temporal edges — returns atoms valid at that moment.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search terms"},
+                    "at_time": {"type": "string", "description": "ISO 8601 timestamp, e.g. '2025-01-15T12:00:00Z'"},
+                    "project": {"type": "string", "description": "Optional project filter"},
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": ["query", "at_time"],
+            },
+        ),
     ]
     for _tool in _tools:
         _tool.inputSchema.setdefault("properties", {})["app_id"] = {
@@ -887,6 +902,20 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     "status": "ingested" if atom_id else "failed",
                     "error": getattr(pg, "_last_ingest_error", None) if not atom_id else None,
                 }
+
+        elif name == "willow_knowledge_at":
+            from core.pg_bridge import PgBridge as _PgBridge19
+            from datetime import datetime as _dt
+            _bridge = _PgBridge19()
+            _raw_time = arguments["at_time"].replace("Z", "+00:00")
+            _at = _dt.fromisoformat(_raw_time)
+            results = _bridge.knowledge_at(
+                arguments["query"],
+                at_time=_at,
+                project=arguments.get("project"),
+                limit=arguments.get("limit", 20),
+            )
+            result = {"results": results, "count": len(results), "at_time": arguments["at_time"]}
 
         elif name == "willow_memory_check":
             from sap.core.memory_gate import check_candidate
