@@ -284,6 +284,8 @@ def main():
     lines.append(f"open flags: {startup['open_flags']}")
     if startup["handoff_summary"]:
         lines.append(startup["handoff_summary"])
+    if startup["postgres"] == "unknown":
+        lines.append("BOOT DEGRADED — invoke /startup before responding to anything.")
 
     print(json.dumps({
         "hookSpecificOutput": {
