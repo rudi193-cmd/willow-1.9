@@ -50,11 +50,6 @@ jobs:
               }
             }
 
-            if (merged.length === 0 && stillOpen.length > 0) {
-              core.info('No newly merged PRs this week.');
-              return;
-            }
-
             // Build report
             let body = `## Upstream Contribution Status — ${new Date().toISOString().split('T')[0]}\n\n`;
 
