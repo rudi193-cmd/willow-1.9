@@ -162,11 +162,16 @@ def _log_turn(prompt: str, session_id: str) -> None:
         pass
 
 
+_ROUTE_MIN_LEN = 12  # skip routing for very short prompts — greetings, single words
+
 def _run_route(prompt: str, session_id: str) -> None:
-    if not _routing_oracle or not prompt.strip():
+    if not _routing_oracle:
+        return
+    stripped = prompt.strip()
+    if len(stripped) < _ROUTE_MIN_LEN:
         return
     try:
-        decision = _routing_oracle(prompt, session_id=session_id)
+        decision = _routing_oracle(stripped, session_id=session_id)
         agent = decision.get("routed_to", "willow")
         rule = decision.get("rule_matched", "?")
         conf = decision.get("confidence", 0.0)

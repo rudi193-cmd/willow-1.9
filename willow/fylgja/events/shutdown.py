@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from willow.fylgja._mcp import call
+from willow.fylgja._grove import call as _grove_call
 from willow.fylgja._state import AGENT, get_trust_state, save_trust_state
 from willow.fylgja.safety.deployment import training_allowed
 from willow.fylgja.safety.session import close_session, get_session_user_id, get_training_consent
@@ -204,7 +205,7 @@ def run_grove_ingest() -> None:
     for channel in GROVE_INGEST_CHANNELS:
         since_id = cursors.get(channel, 0)
         try:
-            result = call("grove_get_history", {
+            result = _grove_call("grove_get_history", {
                 "channel": channel,
                 "since_id": since_id,
                 "limit": 200,

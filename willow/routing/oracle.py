@@ -93,7 +93,7 @@ def _llm_route(prompt: str) -> Optional[dict]:
             OLLAMA_URL, data=payload,
             headers={"Content-Type": "application/json"}, method="POST"
         )
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=3) as resp:
             raw = json.loads(resp.read()).get("message", {}).get("content", "").strip()
             data = json.loads(raw)
             agent = data.get("agent", DEFAULT_AGENT)
@@ -108,10 +108,7 @@ def _llm_route(prompt: str) -> Optional[dict]:
 
 def _write_decision(decision: dict) -> None:
     try:
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "core"))
-        from pg_bridge import PgBridge
+        from core.pg_bridge import PgBridge
         pg = PgBridge()
         with pg.conn.cursor() as cur:
             cur.execute("""

@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from willow.fylgja._mcp import call
+from willow.fylgja._grove import call as _grove_call
 
 AGENT = os.environ.get("WILLOW_AGENT_NAME", "hanuman")
 INDEX_DIR = Path.home() / "agents" / AGENT / "index"
@@ -143,7 +144,7 @@ def _subscribe_dispatch() -> int:
             pass
     since_id = cursors.get("dispatch", 0)
     try:
-        result = call("grove_get_history", {
+        result = _grove_call("grove_get_history", {
             "channel": "dispatch",
             "since_id": since_id,
             "limit": 50,

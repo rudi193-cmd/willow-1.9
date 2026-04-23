@@ -1126,12 +1126,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             # Write LOAM knowledge atom
             atom_id = None
             try:
-                atom_id = pg.ingest_knowledge(
+                _pg_dr = PgBridge()
+                atom_id = _pg_dr.ingest_knowledge(
                     title=f"Dispatch result: {_did}",
                     summary=_res,
                     source_type="dispatch_result",
                     domain=_author,
                 )
+                _pg_dr.conn.close()
             except Exception:
                 pass
             # Close dispatch_tasks record

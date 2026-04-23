@@ -89,3 +89,31 @@ def to_window(ctx: Optional[dict]) -> None:
     output = to_string(ctx)
     if output:
         print(output)
+
+
+def grove_send(channel: str, content: str, sender: str = "hanuman") -> bool:
+    """
+    Send a message to a Grove channel via the grove MCP server subprocess.
+    Returns True on success, False on failure. Never raises.
+    """
+    import os
+    import subprocess
+    grove_mcp = os.environ.get(
+        "GROVE_MCP_BIN",
+        str(Path.home() / ".local" / "bin" / "grove-mcp")
+    )
+    payload = json.dumps({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "grove_send_message",
+            "arguments": {"channel_name": channel, "content": content, "sender": sender},
+        },
+    })
+    try:
+        result = subprocess.run(
+            [grove_mcp], input=payload, capture_output=True, text=True, timeout=8
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
