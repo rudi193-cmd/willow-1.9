@@ -25,7 +25,7 @@ def test_detect_feedback_empty_on_clean_prompt():
 
 def test_should_anchor_true_at_interval(tmp_path):
     state_file = tmp_path / "anchor_state.json"
-    state_file.write_text(json.dumps({"prompt_count": 9}))
+    state_file.write_text(json.dumps({"prompt_count": 24}))
     with patch("willow.fylgja.events.prompt_submit.STATE_FILE", state_file):
         assert should_anchor() is True
 
