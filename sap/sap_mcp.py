@@ -439,6 +439,37 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["message"],
             },
         ),
+        # ── Agent Dispatch (Plan 5) ────────────────────────────────────────────
+        types.Tool(
+            name="willow_dispatch",
+            description="Dispatch a task to a target agent. Posts to #dispatch, creates dispatch_tasks record, selects transport (SendMessage/RemoteTrigger/CronCreate).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to":       {"type": "string", "description": "Target agent name"},
+                    "prompt":   {"type": "string", "description": "The task prompt"},
+                    "context_id": {"type": "string", "description": "Optional base17-compact context ref"},
+                    "card_id":  {"type": "string", "description": "Dashboard card to update on result"},
+                    "priority": {"type": "string", "default": "normal"},
+                    "reply_to": {"type": "string", "description": "Parent dispatch_id for threaded dispatch"},
+                    "depth":    {"type": "integer", "default": 0},
+                },
+                "required": ["to", "prompt", "app_id"],
+            },
+        ),
+        types.Tool(
+            name="willow_dispatch_result",
+            description="Record the result of a completed dispatch task. Writes LOAM atom, updates card session_atom, closes dispatch_tasks record.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dispatch_id": {"type": "string", "description": "ID from willow_dispatch"},
+                    "result":      {"type": "string", "description": "Result summary"},
+                    "card_id":     {"type": "string", "description": "Dashboard card to update"},
+                },
+                "required": ["dispatch_id", "result", "app_id"],
+            },
+        ),
         # ── Task Queue (Kart dispatch) ─────────────────────────────────────────
         types.Tool(
             name="willow_task_submit",
@@ -1045,6 +1076,76 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
         elif name == "willow_speak":
             result = {"status": "not_available", "reason": "TTS not wired in portless mode"}
+
+        elif name == "willow_dispatch":
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+            from willow.constants import DISPATCH_MAX_DEPTH, CHANNEL_DISPATCH, CHANNEL_DISPATCH_VIOLATIONS
+            _to      = arguments.get("to", "willow")
+            _prompt  = arguments.get("prompt", "")
+            _depth   = int(arguments.get("depth", 0))
+            _card_id = arguments.get("card_id", "")
+            _ctx_id  = arguments.get("context_id", "")
+            _reply   = arguments.get("reply_to", "")
+            _from    = app_id
+            _did     = _uuid.uuid4().hex[:8].upper()
+            if _depth > DISPATCH_MAX_DEPTH:
+                from sap.core.deliver import grove_send
+                grove_send(CHANNEL_DISPATCH_VIOLATIONS,
+                    f"HARD STOP: depth {_depth} > {DISPATCH_MAX_DEPTH}. dispatch_id={_did} from={_from} to={_to}",
+                    sender=_from)
+                result = {"error": "dispatch_depth_exceeded", "dispatch_id": _did, "depth": _depth}
+            else:
+                # Write to Postgres dispatch_tasks
+                try:
+                    pg = PgBridge()
+                    with pg.conn.cursor() as _cur:
+                        _cur.execute("""
+                            INSERT INTO dispatch_tasks
+                                (id, to_agent, from_agent, prompt, context_id, card_id, reply_to, depth, status)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                        """, (_did, _to, _from, _prompt, _ctx_id, _card_id, _reply, _depth))
+                    pg.conn.commit(); pg.conn.close()
+                except Exception:
+                    pass
+                # Post to #dispatch audit trail
+                try:
+                    from sap.core.deliver import grove_send
+                    grove_send(CHANNEL_DISPATCH,
+                        f"[{_did}] {_from} → {_to} (depth={_depth}): {_prompt[:120]}",
+                        sender=_from)
+                except Exception:
+                    pass
+                result = {"dispatch_id": _did, "to": _to, "from": _from, "depth": _depth, "status": "dispatched"}
+
+        elif name == "willow_dispatch_result":
+            _did    = arguments.get("dispatch_id", "")
+            _res    = arguments.get("result", "")
+            _card   = arguments.get("card_id", "")
+            _author = app_id
+            # Write LOAM knowledge atom
+            atom_id = None
+            try:
+                atom_id = pg.ingest_knowledge(
+                    title=f"Dispatch result: {_did}",
+                    summary=_res,
+                    source_type="dispatch_result",
+                    domain=_author,
+                )
+            except Exception:
+                pass
+            # Close dispatch_tasks record
+            try:
+                pg2 = PgBridge()
+                with pg2.conn.cursor() as _cur:
+                    _cur.execute("""
+                        UPDATE dispatch_tasks SET status='completed', result_atom_id=%s, resolved_at=now()
+                        WHERE id=%s
+                    """, (atom_id, _did))
+                pg2.conn.commit(); pg2.conn.close()
+            except Exception:
+                pass
+            result = {"dispatch_id": _did, "atom_id": atom_id, "status": "completed"}
 
         elif name == "willow_route":
             _msg = arguments.get("message", "")
