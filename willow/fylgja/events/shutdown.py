@@ -182,6 +182,85 @@ def run_ingot(session_id: str) -> None:
         pass
 
 
+def run_grove_ingest() -> None:
+    """
+    Ingest new Grove channel messages into LOAM.
+    Cursor per channel at /tmp/willow-grove-cursor-{AGENT}.json.
+    Dumps messages to ~/agents/{AGENT}/grove/{channel}/{YYYYMMDD}.md then ingests.
+    """
+    from willow.constants import GROVE_INGEST_CHANNELS
+    cursor_file = Path(f"/tmp/willow-grove-cursor-{AGENT}.json")
+    cursors: dict = {}
+    if cursor_file.exists():
+        try:
+            cursors = json.loads(cursor_file.read_text())
+        except Exception:
+            pass
+
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    grove_dir = Path.home() / "agents" / AGENT / "grove"
+    any_ingested = False
+
+    for channel in GROVE_INGEST_CHANNELS:
+        since_id = cursors.get(channel, 0)
+        try:
+            result = call("grove_get_history", {
+                "channel": channel,
+                "since_id": since_id,
+                "limit": 200,
+            }, timeout=15)
+        except Exception:
+            continue
+
+        if not isinstance(result, dict):
+            continue
+        messages = result.get("messages", [])
+        if not messages:
+            continue
+
+        # Dump to file
+        channel_dir = grove_dir / channel
+        channel_dir.mkdir(parents=True, exist_ok=True)
+        dump_path = channel_dir / f"{today}.md"
+        lines = [f"# #{channel} — {today}\n"]
+        last_id = since_id
+        for msg in messages:
+            msg_id = msg.get("id", 0)
+            sender = msg.get("sender", "?")
+            text = msg.get("text", "")
+            ts = msg.get("ts", "")
+            lines.append(f"[{ts}] **{sender}**: {text}\n")
+            if msg_id > last_id:
+                last_id = msg_id
+
+        # Append to existing file if it exists
+        mode = "a" if dump_path.exists() else "w"
+        with dump_path.open(mode, encoding="utf-8") as f:
+            f.writelines(lines)
+
+        # Ingest to LOAM
+        try:
+            call("willow_knowledge_ingest", {
+                "app_id": AGENT,
+                "title": f"#{channel} — {today}",
+                "summary": str(dump_path),
+                "source_type": "grove_channel",
+                "category": "grove",
+                "domain": AGENT,
+            }, timeout=15)
+        except Exception:
+            pass
+
+        cursors[channel] = last_id
+        any_ingested = True
+
+    if any_ingested:
+        try:
+            cursor_file.write_text(json.dumps(cursors, indent=2))
+        except Exception:
+            pass
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -192,6 +271,7 @@ def main():
     session_id = data.get("session_id", "")
 
     mark_session_clean()
+    run_grove_ingest()
     run_compost()
     run_feedback_pipeline()
     run_handoff_rebuild()

@@ -143,6 +143,34 @@ CREATE TABLE IF NOT EXISTS ratifications (
     cache_path  TEXT,
     ratified_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS dispatch_tasks (
+    id              TEXT PRIMARY KEY,
+    to_agent        TEXT NOT NULL,
+    from_agent      TEXT NOT NULL,
+    prompt          TEXT NOT NULL,
+    context_id      TEXT,
+    card_id         TEXT,
+    session_id      TEXT,
+    priority        TEXT NOT NULL DEFAULT 'normal',
+    reply_to        TEXT,
+    depth           INTEGER NOT NULL DEFAULT 0,
+    escalation_required BOOLEAN NOT NULL DEFAULT FALSE,
+    deposit_to      TEXT NOT NULL DEFAULT 'binder',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    result_atom_id  TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at     TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS compact_contexts (
+    id          TEXT PRIMARY KEY,
+    content     TEXT NOT NULL,
+    category    TEXT NOT NULL DEFAULT 'handoff',
+    agent       TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL
+);
 """
 
 # Columns added after initial deployment — safe to run repeatedly.
@@ -162,6 +190,10 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_valid_at ON knowledge (valid_at);
 CREATE INDEX IF NOT EXISTS idx_knowledge_invalid_at ON knowledge (invalid_at)
     WHERE invalid_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_agent_status ON tasks (agent, status);
+CREATE INDEX IF NOT EXISTS idx_dispatch_to ON dispatch_tasks (to_agent, status);
+CREATE INDEX IF NOT EXISTS idx_dispatch_from ON dispatch_tasks (from_agent);
+CREATE INDEX IF NOT EXISTS idx_compact_agent ON compact_contexts (agent);
+CREATE INDEX IF NOT EXISTS idx_compact_expires ON compact_contexts (expires_at);
 CREATE INDEX IF NOT EXISTS idx_opus_atoms_domain ON opus_atoms (domain);
 CREATE INDEX IF NOT EXISTS idx_feedback_domain ON feedback (domain);
 CREATE INDEX IF NOT EXISTS idx_jeles_sessions_agent ON jeles_sessions (agent);
