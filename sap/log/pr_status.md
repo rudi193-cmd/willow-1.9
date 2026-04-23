@@ -1,16 +1,19 @@
-# PR Status — 2026-04-23T00:00:00Z
+# PR Status — 2026-04-23T16:10:00Z
 
-## modelcontextprotocol/python-sdk#2494
+## modelcontextprotocol/python-sdk#2494 — feat(examples): postgres-backed MCP server with filesystem authorization
 - State: open
-- CI: unknown — checks page did not fully render statuses via unauthenticated web scrape; server-conformance check confirmed passing; 24 additional matrix test jobs and pre-commit listed but statuses not visible
+- CI: failing — checks/pre-commit, all-green
 - Reviews: none
 - Last commit: d5662c5
 
-## punkpeye/servers#5247
-- State: unknown — repository punkpeye/servers returns HTTP 404; repo may have been renamed, deleted, or the tracked URL is incorrect
-- CI: n/a
-- Reviews: n/a
-- Last commit: n/a
+## punkpeye/awesome-mcp-servers#5247 — feat: add willow-mcp to Knowledge & Memory
+- State: open
+- CI: passing
+- Reviews: none
+- Last commit: e07f59d
 
----
-**Note:** GitHub REST API returned 403 (unauthenticated rate-limit) and `gh` CLI is not available in this environment. Data sourced from unauthenticated HTML scrape of github.com. For accurate CI check statuses, run `gh pr checks 2494 --repo modelcontextprotocol/python-sdk` from an authenticated shell.
+## rudi193-cmd/willow-1.5#4 — fix: P0 security patches — C1 shell injection, C2 unsigned exec, C3 shell adapter, C4 SQL identifiers, C5 plaintext creds
+- State: closed (without merge — 2026-04-15)
+- CI: none ran
+- Reviews: none
+- Last commit: 441a331
