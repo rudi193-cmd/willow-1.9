@@ -23,6 +23,11 @@ TURNS_FILE = Path.home() / "agents" / AGENT / "cache" / "turns.txt"
 ACTIVE_BUILD_FILE = Path("/tmp/hanuman-active-build.json")
 DISPATCH_INBOX = Path(f"/tmp/willow-dispatch-inbox-{AGENT}.json")
 
+try:
+    from willow.routing.oracle import route as _routing_oracle
+except ImportError:
+    _routing_oracle = None
+
 TRUST_LEVELS = {0: "OBSERVER", 1: "WORKER", 2: "OPERATOR", 3: "ENGINEER", 4: "ARCHITECT"}
 PERMISSION_LEVELS = {
     "local_llm": 1, "cloud_llm_free": 1, "conversation_storage": 1,
@@ -157,6 +162,21 @@ def _log_turn(prompt: str, session_id: str) -> None:
         pass
 
 
+def _run_route(prompt: str, session_id: str) -> None:
+    if not _routing_oracle or not prompt.strip():
+        return
+    try:
+        decision = _routing_oracle(prompt, session_id=session_id)
+        agent = decision.get("routed_to", "willow")
+        rule = decision.get("rule_matched", "?")
+        conf = decision.get("confidence", 0.0)
+        latency = decision.get("latency_ms", 0)
+        flag = " ⚑" if conf < 0.7 else ""
+        print(f"[ROUTE] → {agent}  rule={rule}  conf={conf:.2f}  {latency}ms{flag}")
+    except Exception:
+        pass
+
+
 def _inject_dispatch_inbox() -> None:
     """
     On first operator turn only: read dispatch inbox and inject [DISPATCH] block.
@@ -205,6 +225,7 @@ def main():
     prompt = data.get("prompt", "")
 
     _run_source_ring(session_id)
+    _run_route(prompt, session_id)
     _run_anchor()
     _inject_dispatch_inbox()
     _run_feedback(prompt, session_id)

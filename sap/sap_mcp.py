@@ -1047,7 +1047,18 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             result = {"status": "not_available", "reason": "TTS not wired in portless mode"}
 
         elif name == "willow_route":
-            result = {"routed_to": "willow", "note": "Message routing defaults to willow in portless mode"}
+            _msg = arguments.get("message", "")
+            _sid = arguments.get("session_id", "")
+            try:
+                from willow.routing.oracle import route as _routing_oracle
+                result = _routing_oracle(_msg, session_id=_sid) if _msg else {
+                    "routed_to": "willow", "rule_matched": "no-message", "confidence": 0.5, "latency_ms": 0,
+                }
+            except Exception as _re:
+                result = {
+                    "routed_to": "willow", "rule_matched": "oracle-unavailable",
+                    "confidence": 0.5, "latency_ms": 0, "error": str(_re),
+                }
 
         # ── Task Queue ────────────────────────────────────────────────────────
         elif name == "willow_task_submit":
