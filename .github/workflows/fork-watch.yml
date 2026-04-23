@@ -1,0 +1,38 @@
+name: Fork Watcher
+
+on:
+  fork:
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Open fork tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fork = context.payload.forkee;
+            const owner = fork.owner.login;
+            const repo = fork.full_name;
+            const url = fork.html_url;
+            const now = new Date().toISOString().split('T')[0];
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🌿 Fork: ${repo}`,
+              labels: ['fork-watch'],
+              body: [
+                `**${owner}** forked willow-1.9 on ${now}.`,
+                ``,
+                `**Fork:** ${url}`,
+                `**Owner:** https://github.com/${owner}`,
+                ``,
+                `---`,
+                `_Check back in a few days — if they're building something interesting, reach out._`,
+                `_If they contribute back, close this issue and run \`@all-contributors add @${owner} code\`._`,
+              ].join('\n'),
+            });

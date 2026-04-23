@@ -49,6 +49,15 @@ Fylgja is Willow’s behavioral layer—hooks and safety rules wired in at the a
 > The villagers brought their memories to the willow. Not to store them, but because when you speak a thing to something that will not forget it, the thing becomes more real.
 > 
 Willow solves the "amnesia problem" of modern AI. Most tools keep your history in a vendor's cloud where you cannot audit it. Willow gives you **continuity without giving up control**, naming the people you love in the very architecture of the code.
+## 🤝 Contributors & Upstream Contributions
+
+Willow is built on the shoulders of independent open source maintainers. When our PRs merge upstream, their names go here. See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the full list.
+
+<!-- ALL-CONTRIBUTORS-LIST:START -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+[![All Contributors](https://img.shields.io/github/all-contributors/rudi193-cmd/willow-1.9?color=ee8449&style=flat-square)](CONTRIBUTORS.md)
+
 ## ⚖️ License & Integrity
  * **Integrity**: Every significant event is recorded in **FRANK’s Ledger**, an append-only SHA-256 hash chain.
  * **License**: MIT License · Copyright 2026 Sean Campbell.

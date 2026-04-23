@@ -1,0 +1,101 @@
+name: Upstream Contribution Tracker
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # Every Monday at 9am UTC
+  workflow_dispatch:
+
+jobs:
+  check-upstream-prs:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check upstream PR statuses
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // List of upstream PRs to track — update as new contributions are made
+            const upstreamPRs = [
+              { repo: 'openclaw/openclaw',                   pr: 67789, contribution: 'willow-memory-health skill' },
+              { repo: 'NousResearch/hermes-agent',           pr: 11979, contribution: 'Kart task queue tool' },
+              { repo: 'RyjoxTechnologies/Octopoda-OS',       pr: 1,     contribution: 'DarkRadar BrainHub signal' },
+              { repo: 'punkpeye/awesome-mcp-servers',        pr: 5247,  contribution: 'willow-mcp listing' },
+              { repo: 'TensorBlock/awesome-mcp-servers',     pr: 432,   contribution: 'willow-mcp listing' },
+              { repo: 'modelcontextprotocol/python-sdk',     pr: 2494,  contribution: 'postgres-knowledge-server example' },
+              { repo: 'ollama/ollama',                       pr: 15765, contribution: 'HuggingFace Hub GGUF pull docs' },
+              { repo: 'Textualize/textual',                  pr: 6510,  contribution: 'async message_feed example' },
+              { repo: 'Kludex/starlette',                    pr: 3249,  contribution: 'FilesystemAuthBackend docs' },
+              { repo: 'BerriAI/litellm',                     pr: 26307, contribution: 'custom GGUF Ollama cookbook' },
+              { repo: 'Textualize/rich',                     pr: 4092,  contribution: 'safe_markup example' },
+            ];
+
+            const merged = [];
+            const stillOpen = [];
+
+            for (const item of upstreamPRs) {
+              const [owner, repo] = item.repo.split('/');
+              try {
+                const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: item.pr });
+                if (pr.merged_at) {
+                  merged.push({ ...item, merged_at: pr.merged_at });
+                } else {
+                  stillOpen.push({ ...item, state: pr.state });
+                }
+              } catch (e) {
+                stillOpen.push({ ...item, state: 'error: ' + e.message });
+              }
+            }
+
+            if (merged.length === 0 && stillOpen.length > 0) {
+              core.info('No newly merged PRs this week.');
+              return;
+            }
+
+            // Build report
+            let body = `## Upstream Contribution Status — ${new Date().toISOString().split('T')[0]}\n\n`;
+
+            if (merged.length > 0) {
+              body += `### ✅ Merged\n\n`;
+              for (const m of merged) {
+                body += `- [${m.repo} #${m.pr}](https://github.com/${m.repo}/pull/${m.pr}) — ${m.contribution} (merged ${m.merged_at.split('T')[0]})\n`;
+              }
+              body += `\n`;
+            }
+
+            if (stillOpen.length > 0) {
+              body += `### ⏳ Still Open\n\n`;
+              for (const p of stillOpen) {
+                body += `- [${p.repo} #${p.pr}](https://github.com/${p.repo}/pull/${p.pr}) — ${p.contribution}\n`;
+              }
+            }
+
+            body += `\n---\n_When PRs merge: close this issue, update CONTRIBUTORS.md, add badge to README._`;
+
+            // Create or update a pinned tracking issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'upstream-tracker',
+              state: 'open',
+            });
+
+            if (issues.data.length > 0) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '📡 Upstream contribution tracker',
+                labels: ['upstream-tracker'],
+                body,
+              });
+            }

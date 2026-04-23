@@ -1,0 +1,21 @@
+{
+  "projectName": "willow-1.9",
+  "projectOwner": "rudi193-cmd",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": ["README.md"],
+  "imageSize": 100,
+  "commit": true,
+  "commitConvention": "none",
+  "contributors": [],
+  "contributionTypes": [
+    "code",
+    "doc",
+    "ideas",
+    "bug",
+    "test",
+    "review",
+    "tool",
+    "infra"
+  ]
+}
