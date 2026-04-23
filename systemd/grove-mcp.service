@@ -1,0 +1,18 @@
+[Unit]
+Description=Grove MCP Server — streamable-HTTP, Postgres NOTIFY push
+Documentation=https://github.com/rudi193-cmd/willow-1.9
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+Environment=WILLOW_PG_DB=willow_19
+Environment=WILLOW_PG_USER=%u
+Environment=GROVE_MCP_PORT=8765
+Environment=PYTHONPATH=%h/github/safe-app-grove
+ExecStart=/usr/bin/python3 -m grove.mcp_local --serve
+WorkingDirectory=%h/github/safe-app-grove
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

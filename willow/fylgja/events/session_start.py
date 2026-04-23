@@ -175,6 +175,82 @@ def _subscribe_dispatch() -> int:
     return len(addressed)
 
 
+def _ensure_grove_mcp() -> str:
+    """Start grove-mcp.service if not running. Returns status string."""
+    import urllib.request
+    grove_port = os.environ.get("GROVE_MCP_PORT", "8765")
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{grove_port}/mcp", timeout=1)
+        return "grove=up"
+    except Exception:
+        pass
+    # Not reachable — try systemctl start
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "start", "grove-mcp.service"],
+            capture_output=True, timeout=5,
+        )
+        return "grove=starting"
+    except Exception:
+        return "grove=unavailable"
+
+
+def _run_silent_startup() -> dict:
+    """
+    Silent startup — runs before the first prompt regardless of what the user says.
+    Returns a dict with handoff summary, open flags, and postgres state.
+    Writes session_anchor.json and resets anchor_state.json.
+    """
+    anchor_dir = Path.home() / ".willow"
+    anchor_file = anchor_dir / "session_anchor.json"
+    state_file = anchor_dir / "anchor_state.json"
+
+    result = {"handoff_title": "", "handoff_summary": "", "open_flags": 0, "top_flags": [], "postgres": "unknown"}
+
+    # Get latest handoff
+    try:
+        h = call("willow_handoff_latest", {"app_id": AGENT}, timeout=8)
+        result["handoff_title"] = h.get("filename", "")
+        summary = h.get("summary", "")
+        result["handoff_summary"] = summary[:120] if summary else ""
+    except Exception:
+        pass
+
+    # Check open flags
+    try:
+        flags = call("store_list", {"app_id": AGENT, "collection": "hanuman/flags"}, timeout=5)
+        open_flags = [f for f in (flags or []) if f.get("flag_state") == "open"]
+        result["open_flags"] = len(open_flags)
+        result["top_flags"] = [f.get("title", "")[:60] for f in open_flags[:3]]
+    except Exception:
+        pass
+
+    # Postgres state from already-run willow_status
+    try:
+        s = call("willow_status", {"app_id": AGENT}, timeout=5)
+        result["postgres"] = "up" if isinstance(s.get("postgres"), dict) else "unknown"
+    except Exception:
+        pass
+
+    # Write anchor cache
+    try:
+        anchor_dir.mkdir(parents=True, exist_ok=True)
+        anchor_file.write_text(json.dumps({
+            "written_at": datetime.now().isoformat(),
+            "agent": "heimdallr",
+            "postgres": result["postgres"],
+            "handoff_title": result["handoff_title"],
+            "handoff_summary": result["handoff_summary"],
+            "open_flags": result["open_flags"],
+            "top_flags": result["top_flags"],
+        }, indent=2))
+        state_file.write_text(json.dumps({"prompt_count": 0}))
+    except Exception:
+        pass
+
+    return result
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -186,15 +262,28 @@ def main():
     _clear_stale_thread()
     summary, alerts = _scan_hardware()
     summary.append(_check_willow_status())
+    summary.append(_ensure_grove_mcp())
     if session_id:
         _register_jeles(session_id)
     dispatch_count = _subscribe_dispatch()
     if dispatch_count:
         summary.append(f"dispatch={dispatch_count}")
 
+    # Silent startup — runs always, regardless of first prompt
+    startup = _run_silent_startup()
+
     lines = ["[INDEX] " + " · ".join(summary)]
     for a in alerts:
         lines.append(f"  ⚠ {a}")
+
+    # Anchor context — always injected
+    lines.append(f"[ANCHOR]")
+    lines.append(f"agent={AGENT}  postgres={startup['postgres']}")
+    if startup["handoff_title"]:
+        lines.append(f"last handoff: {startup['handoff_title']}")
+    lines.append(f"open flags: {startup['open_flags']}")
+    if startup["handoff_summary"]:
+        lines.append(startup["handoff_summary"])
 
     print(json.dumps({
         "hookSpecificOutput": {

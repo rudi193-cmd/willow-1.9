@@ -172,6 +172,21 @@ def step_6_socket(skip_socket: bool = False) -> None:
     except (subprocess.CalledProcessError, FileNotFoundError):
         print("  Metabolic socket: systemd not available (skip)")
 
+    # Grove MCP server — persistent streamable-HTTP on port 8765
+    grove_src = WILLOW_ROOT / "systemd" / "grove-mcp.service"
+    if grove_src.exists():
+        shutil.copy2(grove_src, systemd_user / "grove-mcp.service")
+        try:
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True,
+                           capture_output=True)
+            subprocess.run(
+                ["systemctl", "--user", "enable", "--now", "grove-mcp.service"],
+                check=True, capture_output=True,
+            )
+            print("  Grove MCP: enabled")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("  Grove MCP: systemd not available (skip)")
+
 
 def step_7_cmb(skip_pg: bool = False) -> None:
     """Write CMB atom — first session anchor, never composted."""
