@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-boot.py — Willow onboarding TUI.
+shoot.py — Willow onboarding TUI.
 b17: BOOT1  ΔΣ=42
 
-Runs after seed.py. Presents the FRANK experience, collects API keys,
+Runs after root.py. Presents the FRANK experience, collects API keys,
 writes them to the Fernet vault, then launches the dashboard.
 
-  python3 boot.py
+  python3 shoot.py
 """
 import curses
 import json
@@ -421,9 +421,8 @@ def _exec_0() -> None:
 
 
 def _exec_1() -> None:
-    """Step 1 — verify/install dependencies."""
-    from seed import ensure_deps
-    ensure_deps()
+    """Step 1 — handled by root.py."""
+    pass
 
 
 def _exec_2() -> None:
@@ -445,9 +444,8 @@ def _exec_3() -> None:
 
 
 def _exec_4() -> None:
-    """Step 4 — create SAFE folder."""
-    from seed import ensure_safe_dir
-    ensure_safe_dir()
+    """Step 4 — handled by root.py."""
+    pass
 
 
 def _exec_5() -> None:
@@ -1061,6 +1059,17 @@ def page_path_select(win) -> str:
                 return path
 
 
+def _write_fingerprint_to_profile(fp: str) -> None:
+    export_line = f'\nexport WILLOW_PGP_FINGERPRINT="{fp}"\n'
+    for profile in (Path.home() / ".bashrc", Path.home() / ".zshrc"):
+        if profile.exists():
+            text = profile.read_text()
+            if "WILLOW_PGP_FINGERPRINT" not in text:
+                profile.write_text(text + export_line)
+        elif profile.name == ".bashrc":
+            profile.write_text(export_line.lstrip())
+
+
 def page_pgp_create(win) -> str:
     """GPG key creation for new users. Returns fingerprint."""
     _fill_bg(win)
@@ -1157,8 +1166,7 @@ def page_pgp_create(win) -> str:
         _safe(win, y + 7, 4, f"Fingerprint: {fingerprint[:32]}...", dim)
         win.refresh()
         time.sleep(1.0)
-        from seed import write_fingerprint_to_profile
-        write_fingerprint_to_profile(fingerprint)
+        _write_fingerprint_to_profile(fingerprint)
     else:
         _safe(win, y + 6, 4, "Key generation failed. Check gpg is installed.", red)
         win.refresh()
@@ -1466,7 +1474,7 @@ _FRANK_STEPS = [
         ],
         "install": [
             ("cryptography",       "Python encryption library (~5MB)"),
-            ("~/.willow_creds.db", "your encrypted credential store"),
+            ("~/.willow/vault.db", "your encrypted credential store"),
         ],
         "post_beat": "Andvari curse assessment: NEGATIVE. Certification on file. Counter-signature from Loki: [ignored]. Expected.",
         "vault_action": "init",
@@ -1899,6 +1907,23 @@ def run_boot(stdscr):
     return cfg
 
 
+def _exec_next(cfg: dict) -> None:
+    """Chain to dashboard after boot completes."""
+    candidates = [
+        Path(__file__).parent.parent / "willow-dashboard" / "dashboard.py",
+        Path.home() / "github" / "willow-dashboard" / "dashboard.py",
+        Path(__file__).parent / "apps" / "dashboard.py",
+    ]
+    override = os.environ.get("WILLOW_DASHBOARD_PATH", "")
+    if override:
+        candidates.insert(0, Path(override))
+    for path in candidates:
+        if path.exists():
+            _blog(f"exec_next: launching {path}")
+            os.execv(sys.executable, [sys.executable, str(path)])
+    _blog("exec_next: dashboard.py not found")
+
+
 def boot() -> dict | None:
     """Entry point. Run the boot sequence. Returns config or None if aborted."""
     import traceback
@@ -1915,6 +1940,8 @@ def boot() -> dict | None:
         _blog(traceback.format_exc())
         raise
     _blog(f"boot: done — result={'ok' if result else 'None'}")
+    if result:
+        _exec_next(result)
     return result
 
 

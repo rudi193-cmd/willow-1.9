@@ -1098,14 +1098,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             else:
                 # Write to Postgres dispatch_tasks
                 try:
-                    pg = PgBridge()
-                    with pg.conn.cursor() as _cur:
+                    _pg = PgBridge()
+                    with _pg.conn.cursor() as _cur:
                         _cur.execute("""
                             INSERT INTO dispatch_tasks
                                 (id, to_agent, from_agent, prompt, context_id, card_id, reply_to, depth, status)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
                         """, (_did, _to, _from, _prompt, _ctx_id, _card_id, _reply, _depth))
-                    pg.conn.commit(); pg.conn.close()
+                    _pg.conn.commit(); _pg.conn.close()
                 except Exception:
                     pass
                 # Post to #dispatch audit trail
@@ -1163,27 +1163,36 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     "confidence": 0.5, "latency_ms": 0, "error": str(_re),
                 }
 
-        # ── Task Queue ────────────────────────────────────────────────────────
+        # ── Task Executor (inline — submit = execute, no queue, no daemon) ──────
         elif name == "willow_task_submit":
-            if not pg:
-                result = {"error": "not_available", "reason": "Postgres not connected"}
-            else:
-                task_id = pg.submit_task(
-                    task=arguments["task"],
-                    submitted_by=arguments.get("submitted_by", "ganesha"),
-                    agent=arguments.get("agent", "kart"),
+            import subprocess as _sp, uuid as _uuid2, time as _time
+            _task_cmd  = arguments["task"]
+            _task_id   = _uuid2.uuid4().hex[:8].upper()
+            _started   = _time.time()
+            try:
+                _proc = _sp.run(
+                    _task_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
                 )
-                if task_id:
-                    result = {"task_id": task_id, "status": "pending", "agent": arguments.get("agent", "kart")}
-                else:
-                    result = {"error": "submit_failed"}
+                _elapsed = round(_time.time() - _started, 2)
+                result = {
+                    "task_id":    _task_id,
+                    "status":     "completed" if _proc.returncode == 0 else "failed",
+                    "returncode": _proc.returncode,
+                    "stdout":     _proc.stdout.strip()[-2000:] if _proc.stdout else "",
+                    "stderr":     _proc.stderr.strip()[-500:]  if _proc.stderr else "",
+                    "elapsed_s":  _elapsed,
+                }
+            except _sp.TimeoutExpired:
+                result = {"task_id": _task_id, "status": "timeout", "error": "exceeded 120s"}
+            except Exception as _te:
+                result = {"task_id": _task_id, "status": "error", "error": str(_te)}
 
         elif name == "willow_task_status":
-            if not pg:
-                result = {"error": "not_available", "reason": "Postgres not connected"}
-            else:
-                task = pg.task_status(arguments["task_id"])
-                result = task if task else {"error": "not_found", "task_id": arguments["task_id"]}
+            result = {"error": "not_applicable", "reason": "tasks execute inline — no status to poll"}
 
         elif name == "willow_task_list":
             if not pg:

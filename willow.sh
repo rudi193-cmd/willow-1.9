@@ -89,7 +89,7 @@ if pg: pg.close()
         fi
         echo "  Updating..."
         git -C "${WILLOW_ROOT}" pull origin master
-        "${WILLOW_PYTHON}" "${WILLOW_ROOT}/seed.py" --skip-gpg
+        "${WILLOW_PYTHON}" "${WILLOW_ROOT}/root.py" --skip-gpg
         echo "  Update complete. Version: $(cat "${HOME}/.willow/version")"
         ;;
 
@@ -239,7 +239,7 @@ print('  Restore complete.')
         echo "  Done."
         echo ""
         echo "  Your data is gone. The software remains."
-        echo "  Run python3 seed.py to start fresh."
+        echo "  Run python3 root.py to start fresh."
         echo ""
         ;;
 

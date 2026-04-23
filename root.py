@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-seed.py — Sleipnir: 8-step idempotent install.
+root.py — Sleipnir: 8-step idempotent install.
 b17: SLP19  ΔΣ=42
 
 Eight legs. Handles eight things that used to live in eight places.
 Idempotent: run twice, nothing breaks. Run after reinstall: still works.
 
-  python3 seed.py                  — full install
-  python3 seed.py --skip-pg        — skip Postgres (already set up)
-  python3 seed.py --skip-socket    — skip systemd socket install
-  python3 seed.py --skip-gpg       — skip GPG key generation
+  python3 root.py                  — full install
+  python3 root.py --skip-pg        — skip Postgres (already set up)
+  python3 root.py --skip-socket    — skip systemd socket install
+  python3 root.py --skip-gpg       — skip GPG key generation
 """
 import argparse
 import json
@@ -196,6 +196,25 @@ def step_8_version_pin() -> None:
     version_path.write_text(VERSION + "\n")
 
 
+def step_9_path() -> None:
+    """Symlink willow.sh into ~/.local/bin/willow so it's on PATH."""
+    src = WILLOW_ROOT / "willow.sh"
+    dst = Path.home() / ".local" / "bin" / "willow"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.is_symlink() or dst.exists():
+        dst.unlink()
+    dst.symlink_to(src)
+    dst.chmod(0o755)
+
+    # Ensure ~/.local/bin is on PATH in shell profiles
+    export_line = '\nexport PATH="$HOME/.local/bin:$PATH"\n'
+    for profile in (Path.home() / ".bashrc", Path.home() / ".zshrc"):
+        if profile.exists():
+            if ".local/bin" not in profile.read_text():
+                with profile.open("a") as f:
+                    f.write(export_line)
+
+
 def sleipnir(
     skip_pg: bool = False,
     skip_socket: bool = False,
@@ -218,6 +237,7 @@ def sleipnir(
         ("Metabolic socket", lambda: step_6_socket(skip_socket)),
         ("CMB atom",         lambda: step_7_cmb(skip_pg)),
         ("Version pin",      lambda: step_8_version_pin()),
+        ("PATH — willow",    lambda: step_9_path()),
     ]
 
     for label, fn in steps:
@@ -226,8 +246,15 @@ def sleipnir(
         print("done")
 
     print()
-    print("  Ready. Run boot.py for the full onboarding experience.")
-    print()
+    shoot = WILLOW_ROOT / "shoot.py"
+    if shoot.exists():
+        print("  Handing off to shoot.py...")
+        print()
+        os.execv(sys.executable, [sys.executable, str(shoot)])
+    else:
+        print("  Ready. Run manually:")
+        print(f"    python3 {shoot}")
+        print()
 
 
 def main():
