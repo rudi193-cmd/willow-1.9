@@ -42,6 +42,9 @@ def init_pg_schema():
         import importlib
         import core.pg_bridge as pgb
         importlib.reload(pgb)
-        pgb.PgBridge()
+        conn = pgb._connect()
+        pgb.init_schema(conn)
+        conn.commit()
+        conn.close()
     except Exception as e:
         print(f"  pg schema init warning: {e}")

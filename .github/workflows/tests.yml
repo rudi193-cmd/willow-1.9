@@ -35,28 +35,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Setup test database
-        run: |
-          psql -U postgres -h localhost -c "CREATE DATABASE willow_19_test;"
-          python3 -c "
-import sys; sys.path.insert(0, '.')
-from core.pg_bridge import try_connect, init_schema
-conn = try_connect()
-if not conn:
-    print('ERROR: could not connect to Postgres')
-    sys.exit(1)
-init_schema(conn)
-conn.commit()
-conn.close()
-print('Schema initialized')
-"
-        env:
-          WILLOW_PG_DB: willow_19_test
-          WILLOW_PG_USER: postgres
-          WILLOW_PG_HOST: localhost
-          WILLOW_PG_PORT: 5432
-          PGPASSWORD: postgres
-
       - name: Run test suite
         run: python3 -m pytest --ignore=tests/adversarial/e2e -q
         env:
