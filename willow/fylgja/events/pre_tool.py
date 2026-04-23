@@ -1,6 +1,6 @@
 """
 events/pre_tool.py — PreToolUse hook handler.
-Safety gate → MCP guard (Bash + Agent) → KB-first advisory → WWSDN.
+Safety gate → MCP guard (Bash + Agent) → F5 canon guard (write tools).
 """
 import json
 import os
@@ -60,31 +60,6 @@ def _write_depth(n: int) -> None:
         pass
 
 
-def _mcp_store_search(collection: str, query: str) -> list:
-    result = call("store_search", {"app_id": AGENT, "collection": collection, "query": query}, timeout=3)
-    if isinstance(result, list):
-        return result
-    return []
-
-
-def check_kb_first(file_path: str) -> str | None:
-    try:
-        filename = Path(file_path).name
-        records = _mcp_store_search("hanuman/file-index", filename)
-        if records:
-            r = records[0]
-            return (
-                f"[KB-FIRST] Store record exists for this file.\n"
-                f"  id: {r.get('id','?')}  type: {r.get('type','?')}\n"
-                f"  title: {r.get('title','?')}\n"
-                f"  collection: {r.get('collection','?')}\n"
-                f"  Check the store record before reading the full file."
-            )
-    except Exception:
-        pass
-    return None
-
-
 def check_f5_canon(tool_name: str, tool_input: dict) -> str | None:
     field = F5_PROSE_TOOLS.get(tool_name)
     if not field:
@@ -104,31 +79,6 @@ def check_f5_canon(tool_name: str, tool_input: dict) -> str | None:
             f"[WWSDN/F5]    fix: write content to a file, store the path instead\n"
         )
     return None
-
-
-def _run_wwsdn(tool_name: str, tool_input: dict) -> None:
-    f5 = check_f5_canon(tool_name, tool_input)
-    if f5:
-        print(json.dumps({"decision": "block", "reason": f5}))
-        sys.exit(0)
-    signal = " ".join(
-        v[:100] for v in tool_input.values()
-        if isinstance(v, str) and len(v) > 3
-    )[:200]
-    if not signal:
-        return
-    try:
-        results = call("willow_knowledge_search", {
-            "app_id": AGENT, "query": signal, "limit": 3
-        }, timeout=5)
-        knowledge = results.get("knowledge", []) if isinstance(results, dict) else []
-        if knowledge:
-            lines = [f"[WWSDN] {tool_name} — neighborhood", f"[WWSDN] Signal: {signal[:80]}"]
-            for k in knowledge[:3]:
-                lines.append(f"  {k.get('title','?')} [{k.get('source_type','?')}]")
-            print("\n".join(lines))
-    except Exception:
-        pass
 
 
 def _run_safety_gate(tool_name: str, tool_input: dict, session_id: str) -> str | None:
@@ -209,22 +159,11 @@ def main():
             print(json.dumps({"decision": "block", "reason": reason}))
         sys.exit(0)
 
-    # Read tool — KB-first advisory
-    if tool_name == "Read":
-        file_path = tool_input.get("file_path", "")
-        advisory = check_kb_first(file_path) if file_path else None
-        if advisory:
-            print(json.dumps({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "additionalContext": advisory,
-                }
-            }))
-        sys.exit(0)
-
-    # Write tools — WWSDN
+    # Write tools — F5 canon guard
     if tool_name in F5_PROSE_TOOLS:
-        _run_wwsdn(tool_name, tool_input)
+        f5 = check_f5_canon(tool_name, tool_input)
+        if f5:
+            print(json.dumps({"decision": "block", "reason": f5}))
         sys.exit(0)
 
     sys.exit(0)

@@ -1655,10 +1655,10 @@ def _hot_reload(target: str = "all") -> dict:
 
     if target in ("all", "postgres"):
         try:
-            from pg_bridge import try_connect
-            importlib.reload(sys.modules["pg_bridge"])
-            pg = try_connect()
-            reloaded.append(f"postgres: {'connected' if pg else 'failed'}")
+            import pg_bridge as _pgmod
+            importlib.reload(_pgmod)
+            pg = _pgmod.PgBridge()
+            reloaded.append("postgres: connected")
         except Exception as e:
             errors.append(f"postgres: {e}")
 

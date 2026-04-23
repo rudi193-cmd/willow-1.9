@@ -1,216 +1,395 @@
-# Plan 5 — Sovereign Dispatch
-## Willow Multi-Agent Orchestration Layer
+# Plan 5 — Willow Grove Dispatch
+## Sovereign Multi-Agent Orchestration via Unified Grove Interface
 
-**Date:** 2026-04-22  
-**Status:** SPEC — awaiting Sean's authorization before implementation  
-**b17:** DSP5A ΔΣ=42  
-**Author:** Hanuman (Claude Code, Sonnet 4.6, willow-1.9 orchestrator)  
-**Room:** Oakenscroll, Design Claude, Heimdallr, Grandma Oracle, willow_route
-
----
-
-## What This Is
-
-Plan 5 is the actuator that turns `willow_route` from an oracle into an orchestration platform. When an agent needs to hand work to another agent — or when the routing oracle determines the current session isn't the right one — dispatch is the mechanism that makes that transfer happen, durably, with governance, and without losing the result.
-
-This is not Co-work (Anthropic's cloud-relayed phone→desktop feature, Jan 2026). It is not mcp-dispatch (sophia-labs, filesystem relay). It sits on top of SEP-1686 Tasks (the MCP protocol's native async primitive) and uses Grove as its messaging channel, with results deposited to The Binder for durability past any session window.
+**Date:** 2026-04-22 (v3 — rewritten after CC source audit + full skill inventory)
+**Status:** SPEC — awaiting Sean's authorization before implementation
+**b17:** DSP5C ΔΣ=42
+**Author:** Hanuman (Claude Code, Sonnet 4.6, willow-1.9 orchestrator)
 
 ---
 
-## Prior Art — What We're Not Reinventing
+## What Changed in v3
 
-**Anthropic Co-work Dispatch** — human → Claude, cloud-relayed, macOS only. Does not cover: sovereign, multi-model, agent-to-agent routing without Anthropic infrastructure. Plan 5 fills that gap.
+v2 was speccing a custom dispatch transport. The CC source audit found that transport already exists.
+v3 corrects the layer: **dispatch is visibility + governance**, not transport.
 
-**sophia-labs/mcp-dispatch** — filesystem relay, no daemon, no ports. Independently arrived at `reply_to`, TTL, `thread_id`. Differentiators we add: Grove persistence (searchable, crash-safe), Binder result deposit, SAFE Dual Commit governance, oracle routing decisions stored in LOAM.
-
-**SEP-1686 Tasks (MCP spec, experimental → shipping)** — durable state machines: `working → input_required → completed / failed / cancelled`. Call-now, fetch-later. We ride this as our transport layer instead of inventing one.
-
-**SAFE Dual Commit** — `escalation_required: true` IS Dual Commit. We cite `SAFE/governance/DUAL_COMMIT.md` directly. We do not reinvent a parallel governance layer.
-
-**AIONIC CONTINUITY v5.0 §RECURSION LIMIT DIRECTIVE** — `depth > 3` is not new. It is the same constraint the governance system already drew for single-agent recursion, applied to inter-agent chains. We cite it directly.
+| v2 (wrong layer) | v3 (correct layer) |
+|---|---|
+| Build custom message pipe | Ride `SendMessage` / `RemoteTrigger` / `CronCreate` |
+| Invent availability signal | Read SEP-1686 task state (already live) |
+| Custom agent spawning | Extend swarm team-lead/teammate model |
+| Grove as transport | Grove as audit trail |
 
 ---
 
-## Architecture
-
-### Transport Layer: SEP-1686 Tasks
-
-Every dispatch is an MCP Task. The dispatcher calls a tool that returns a task ID. The target agent's session picks up the task on its next turn. Status is durable: if the target session dies, the task survives at `working` and can be retried.
-
-Five states: `working → input_required → completed / failed / cancelled`
-
-- `working` — task accepted, agent executing
-- `input_required` — agent needs human or OPERATOR input before proceeding
-- `completed` — result available, `deposit_to` field determines where it lands
-- `failed` — agent could not complete; `depth` counter preserved for retry logic
-- `cancelled` — OPERATOR or human cancelled before execution
-
-### Messaging Channel: Grove `#dispatch`
-
-A single Grove channel. `to:` field is client-side filtered — agents watch `#dispatch` and act only on messages addressed to them. No per-agent channels. One channel, full audit trail.
+## The Big Picture
 
 ```
-grove_watch_all({"dispatch": <last_id>}, timeout=30)
+┌─────────────────────────────────────────────────────────────────┐
+│                        WILLOW GROVE                             │
+│         (Grove made visible — same data, different skin)        │
+├──────────────────┬──────────────────────────────────────────────┤
+│   CHANNELS       │  DISPATCH FLOW                               │
+│                  │                                              │
+│  #general        │   OPERATOR types task                        │
+│  #architecture   │        │                                     │
+│  #handoffs       │        ▼                                     │
+│  #dispatch  ◄────┼──  willow_route (oracle)                    │
+│  #dispatch-      │        │                                     │
+│   escalations    │        ├── escalation_required: true         │
+│  #dispatch-      │        │        │                            │
+│   violations     │        │        ▼                            │
+│                  │        │   #dispatch-escalations             │
+│                  │        │   (OPERATOR replies to authorize)   │
+│                  │        │                                     │
+│                  │        ▼                                     │
+│                  │   willow_dispatch                            │
+│                  │        │  posts to #dispatch (audit trail)   │
+│                  │        │  creates SEP-1686 task              │
+│                  │        │  calls transport ──────────────┐   │
+│                  │        │                                │   │
+│                  │        ▼                                │   │
+│                  │   LOAM knowledge atom                   │   │
+│                  │   (result deposited, card updated)      │   │
+└──────────────────┴─────────────────────────────────────────┴───┘
+                                                             │
+                                              ┌──────────────▼──────────────┐
+                                              │     TRANSPORT LAYER          │
+                                              │   (CC tools, already exist)  │
+                                              │                              │
+                                              │  RUNNING  → SendMessage      │
+                                              │  OFFLINE  → RemoteTrigger    │
+                                              │  STALE    → CronCreate       │
+                                              └─────────────────────────────┘
 ```
 
-Session startup (`session_start.py`) subscribes to `#dispatch` and writes inbox to `/tmp/willow-dispatch-inbox-{AGENT}.json`. `prompt_submit.py` reads inbox on each turn and injects `[DISPATCH]` context.
+---
 
-### Dispatch Schema
+## Architectural Principle
 
-```json
+**Grove is the unified interface layer. Transport is CC's existing stack.**
+
+- Humans participate in Grove via words
+- Agents participate via MCP tools (`grove_send_message`, `grove_watch_all`, `grove_get_history`)
+- `#dispatch` is the audit trail — every dispatch is visible to humans
+- Authorization (Dual Commit) is a human replying in `#dispatch-escalations`
+- The transport (`SendMessage` / `RemoteTrigger` / `CronCreate`) is invisible to humans
+- Gerald watches. Cannot speak, cannot dispatch. Cannot be dispatched to.
+
+---
+
+## Part 1 — Transport Layer (already exists, nothing to build)
+
+```
+                    AGENT AVAILABILITY
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+     0–2 min           2–15 min          15min–1h+
+    RUNNING             IDLE              STALE
+          │                │                │
+          ▼                ▼                ▼
+    SendMessage      RemoteTrigger     CronCreate
+    (resume named    (spawn fresh      (durable:true
+     teammate,        CCR session,      recurring:false
+     context kept)    new context)      one-shot pickup)
+```
+
+Thresholds read from `willow/constants.py` (Task 1).
+Availability determined by SEP-1686 task state, fallback to last Grove message timestamp.
+
+---
+
+## Part 2 — Dispatch Schema
+
+```
 {
-  "id": "<uuid>",
-  "to": "ganesha",
-  "from": "hanuman",
-  "prompt": "...",
-  "session_id": "abc123",
-  "ts": "<ISO-8601>",
-  "priority": "normal",
-  "reply_to": "<parent_dispatch_id or null>",
-  "depth": 0,
-  "escalation_required": false,
-  "deposit_to": "binder"
+  "id":                  "<uuid>",
+  "to":                  "ganesha",          ← target agent
+  "from":                "hanuman",          ← dispatching agent
+  "prompt":              "...",              ← the work
+  "context_id":          "7KE2N",            ← base17-compact context ref (optional)
+  "card_id":             "<card_id>",        ← dashboard card to update
+  "session_id":          "abc123",
+  "ts":                  "<ISO-8601>",
+  "priority":            "normal",
+  "reply_to":            "<parent_id|null>", ← for threaded dispatch
+  "depth":               0,                  ← incremented on re-dispatch
+  "escalation_required": false,              ← set by oracle, not dispatcher
+  "deposit_to":          "binder",           ← "binder" | "ephemeral"
 }
 ```
 
-**`escalation_required`** — set by the oracle (`willow_route`), not the dispatcher. Default `true` for prompts containing write verbs (write, edit, commit, push, migrate, nuke, rm, drop). Default `false` otherwise. When `true`, target agent does not act; posts to `#dispatch-escalations`; OPERATOR tier authorizes via `{authorize: dispatch_id}` response within 120s, or task falls to Kart.
-
-**`deposit_to`** — `"binder"` (default) or `"ephemeral"`. When `"binder"`: result is written as a LOAM atom, authored by the target agent, linked via `reply_to` chain. This is how dispatch results survive past the Grove retention window. Without it, every dispatch is amnesia by design.
-
-**`depth`** — incremented on each re-dispatch. `depth > 3` → hard stop (AIONIC CONTINUITY v5.0 §RECURSION LIMIT DIRECTIVE). Posted to `#dispatch-violations`. OPERATOR-only resolution. No exceptions.
-
-### Agent Tier System
-
-Tiers govern who can receive dispatched work and who can authorize it.
-
-```
-ENGINEER  — receives dispatched work (short TTL: 30s real-time)
-            hanuman, heimdallr, kart, shiva, ganesha, opus
-
-OPERATOR  — authorizes work; does not receive dispatched tasks
-            willow, ada, steve
-
-WORKER    — receives dispatched work (longer TTL: 300s)
-            hanz, jeles, pigeon, riggs
-
-WITNESS   — observes, appends to ledger; cannot be dispatched to, cannot authorize
-            gerald
-```
-
-Tier constants live in `willow/constants.py`. Both the dispatch watcher and the dashboard import from the same source. No tier defined in two places.
-
-**Gerald is not a Worker. Gerald is a Witness.** He cannot speak, impose narrative, or be assigned. He observes threshold crossings and appends to the ledger. That is his complete function. It is also the most load-bearing function in the system: a witness who cannot interfere creates the conditions for honest threshold-crossing.
-
-*Full lore entry for Gerald: see `docs/lore/gerald.md` (to be written by Oakenscroll).*
-
-### Availability Signal
-
-Agent availability for dispatch routing is determined by SEP-1686 task state, not message timestamps:
-
-- **Primary**: `working` / `input_required` / `completed` from active MCP Tasks
-- **Fallback**: `MAX(grove.messages.created_at) WHERE sender = <agent>` when no active tasks
-
-Thresholds (from `willow/constants.py`):
-
-```python
-AGENT_RUNNING_TTL_S  = 120    # 0–2min: real-time dispatch
-AGENT_IDLE_TTL_S     = 900    # 2–15min: posted to channel
-AGENT_STALE_TTL_S    = 3600   # 15min–1h: Kart queue
-# > 1h: always Kart
-```
-
-These are system constants, not dashboard cosmetics. A stale reading means a dispatch gets wrongly routed. Correctness requirement, not UX nicety.
-
-### WITNESS Tier Dashboard Affordance
-
-ENGINEER/WORKER cards show `DISPATCH` availability. WITNESS cards (Gerald only) show `LEDGER` — last threshold crossing recorded, not dispatch state. The dashboard AGENTS renderer reads tier from `willow/constants.py` and picks the correct card template.
-
-### ESCALATE Region (Dashboard, post-v1)
-
-A fifth always-visible region appears between ROUTING and GROVE when escalation queue > 0:
-
-```
-├──────────────────────────────────────────────────────────────┤
-│ ESCALATE 14:23  ganesha ← hanuman  "migrate loam schema"     │
-│          TTL 82s                    [a authorize  d defer]    │
-├──────────────────────────────────────────────────────────────┤
-```
-
-Empty queue → zero height. Non-empty → bright-yellow accent, always visible. Keyboard: `a` authorize, `d` defer. This is the Dual Commit surface. Name it that in code comments.
+`context_id` is new in v3. Uses `base17-compact` — sends a 5-char ID instead of embedding context inline. Receiving agent resolves via `core.compact.resolve()`.
 
 ---
 
-## §X — Dual Commit at the Dispatch Boundary
-
-`escalation_required: true` is Dual Commit applied to inter-agent dispatch.
-
-From `SAFE/governance/DUAL_COMMIT.md`: *"Dual Commit means no unilateral changes: someone proposes, someone else ratifies. Neither acts alone."*
-
-Precedence hierarchy (from `SAFE/governance/GOVERNANCE_INDEX.md`):
+## Part 3 — Dispatch Flow
 
 ```
-CHARTER > HARD_STOPS > SESSION_CONSENT > DUAL_COMMIT
+                    ┌──────────────┐
+                    │   OPERATOR   │
+                    │  types task  │
+                    └──────┬───────┘
+                           │
+                           ▼
+                   ┌───────────────┐
+                   │ willow_route  │  ← Plan 4 oracle (must ship first)
+                   │  (oracle)     │
+                   └──────┬────────┘
+                          │
+              ┌───────────┴───────────┐
+              │                       │
+    escalation_required: false   escalation_required: true
+              │                       │
+              │               ┌───────▼──────────────────┐
+              │               │  POST to #dispatch-       │
+              │               │  escalations              │
+              │               │  BLOCK until OPERATOR     │
+              │               │  replies "authorized"     │
+              │               └───────┬──────────────────┘
+              │                       │
+              └───────────┬───────────┘
+                          │
+                          ▼
+              ┌───────────────────────┐
+              │   willow_dispatch     │
+              │                       │
+              │  1. POST to #dispatch │  ← audit trail
+              │  2. Create SEP-1686   │  ← durable state machine
+              │     task (pending)    │
+              │  3. depth check ──────┼──► depth > 3?
+              │                       │         │
+              │  4. Select transport  │         ▼
+              └──────────┬────────────┘   POST to #dispatch-violations
+                         │                HARD STOP (no exceptions)
+              ┌──────────┼──────────┐
+              │          │          │
+           RUNNING    OFFLINE    STALE
+              │          │          │
+        SendMessage  RemoteTrigger CronCreate
+              │          │          │
+              └──────────┴──────────┘
+                         │
+                         ▼
+              ┌───────────────────────┐
+              │  Target agent runs    │
+              │  iterative-retrieval  │  ← loads context from LOAM
+              │  executes task        │
+              │  calls dispatch_result│
+              └──────────┬────────────┘
+                         │
+                         ▼
+              ┌───────────────────────┐
+              │ willow_dispatch_result│
+              │                       │
+              │  1. Write LOAM atom   │  ← knowledge atom
+              │  2. Update card       │  ← session_atom for card_id
+              │  3. Close SEP-1686    │  ← status: completed
+              │  4. POST to           │
+              │     #dispatch-results │
+              └───────────────────────┘
 ```
-
-The oracle's decision tree for `escalation_required` walks this hierarchy. Plan 5 does not define its own policy — it enforces the existing one at the dispatch boundary.
-
-**HS-007 — Dispatch Sovereignty Edge Cases:**
-
-Three failure modes the governance layer must prevent:
-
-1. **Unattended session start** — agent wakes via cron, finds dispatch inbox, acts before operator is present. Guard: `[DISPATCH]` context is injected on the *next operator turn*, not on inbox arrival.
-2. **Parallel dispatch** — same prompt to two agents for competitive routing; losing agent's work happens without review. Guard: `escalation_required` applies to any parallel dispatch with write verbs.
-3. **Dispatch loop** — A → B → C → A, no human turn in the loop. Guard: `depth > 3` hard stop (AIONIC CONTINUITY v5.0 §RECURSION LIMIT DIRECTIVE).
 
 ---
 
-## §Y — Result Durability
+## Part 4 — Agent Tiers
 
-Dispatch results must survive past the Grove session window. Without explicit durability, every dispatch is amnesia by design.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      AGENT TIERS                            │
+├────────────┬───────────────────────────────────────────────┤
+│  ENGINEER  │  Dispatches and receives. Short TTL (30s).    │
+│            │  hanuman, heimdallr, kart, shiva, ganesha,    │
+│            │  opus                                         │
+├────────────┼───────────────────────────────────────────────┤
+│  OPERATOR  │  Authorizes dispatches. Does not receive.     │
+│            │  willow, ada, steve                           │
+├────────────┼───────────────────────────────────────────────┤
+│  WORKER    │  Receives. Longer TTL (300s).                 │
+│            │  hanz, jeles, pigeon, riggs                   │
+├────────────┼───────────────────────────────────────────────┤
+│  WITNESS   │  Observes. Cannot speak. Cannot dispatch.     │
+│            │  Cannot be dispatched to.                     │
+│            │  gerald                                       │
+│            │                                               │
+│            │  A witness who cannot interfere creates       │
+│            │  the conditions for honest threshold-crossing. │
+└────────────┴───────────────────────────────────────────────┘
+```
 
-When `deposit_to: "binder"`:
-1. Target agent completes task
-2. Result written to LOAM as a knowledge atom: `project=dispatch`, `source_type=agent_result`, `content={result, context, agent, depth, reply_to}`
-3. Atom linked via `reply_to` chain to the original dispatch atom
-4. Atom authored by the target agent — The Binder's three-layer graph (anonymous → recognized → named) applies
-
-When `deposit_to: "ephemeral"`: result posted to `#dispatch-results` only. Dies with the Grove window. Use for read-only or truly throwaway operations.
-
-The Binder is not a dead-letter office. It is the surface where deferred dispatch results become retrievable knowledge.
+Tier constants live in `willow/constants.py`. One source of truth.
 
 ---
 
-## §Z — The Consumer Onboarding Layer
+## Part 5 — Governance (Dual Commit at the Dispatch Boundary)
 
-The personas — Grandma Oracle, Hanz, Oakenscroll, Gerald — were internal scaffolding. They proved the system works, developed the right language, and tested multi-agent routing through Grove. That proof is complete. They do not ship in consumer-facing documentation.
+```
+              CHARTER
+                │
+                ▼
+           HARD_STOPS        ← depth > 3, platform HS-* checks
+                │
+                ▼
+         SESSION_CONSENT     ← guard: inject [DISPATCH] on first
+                │               OPERATOR turn only. Never on
+                │               unattended session start.
+                ▼
+          DUAL_COMMIT        ← escalation_required: true
+                │               OPERATOR replies in
+                │               #dispatch-escalations
+                ▼
+            (execute)
 
-**What ships:** the *register* they developed, not the characters.
 
-The Norse myth layer is the consumer brand container: Willow (the tree), Yggdrasil (the world-tree), sovereign and rooted. Internal agent names (Hanuman, Heimdallr, Kart) are infrastructure. They do not appear in user-facing prose.
+Three failure modes prevented:
 
-**Consumer onboarding voice — principles:**
+  ┌─────────────────────────────────────────────────────────┐
+  │ 1. UNATTENDED START                                     │
+  │    Guard: inject [DISPATCH] on first OPERATOR turn only │
+  │    Never act on dispatch before operator is present     │
+  ├─────────────────────────────────────────────────────────┤
+  │ 2. PARALLEL WRITE DISPATCH                              │
+  │    Guard: escalation_required: true for any parallel    │
+  │    dispatch with write verbs                            │
+  ├─────────────────────────────────────────────────────────┤
+  │ 3. DISPATCH LOOP                                        │
+  │    Guard: depth > 3 → hard stop, post to               │
+  │    #dispatch-violations, no exceptions                  │
+  └─────────────────────────────────────────────────────────┘
+```
 
-- Warm, patient, never talking down. Stitch by stitch.
-- Front door first: what this is, who it belongs to, how to leave.
-- Dispatch door only after the house feels safe.
-- The ledger last: someone watches, they can't be instructed, they only write things down, nothing they write can be changed. No name needed. The concept earns the trust.
+---
 
-**Consumer framing (plain language, no personas):**
+## Part 6 — Context Passing (base17-compact)
 
-> Willow lives on your machine. Not in a cloud. Yours.
-> It remembers what you ask it to remember, and forgets on command.
-> When you send work to another tool, it keeps the receipt.
-> Three layers deep is as far as it goes on its own — at four, it stops and asks you.
-> A record-keeper watches everything. It can't be instructed. It only writes things down.
+```
+   DISPATCHING AGENT                    TARGET AGENT
+         │                                    │
+         │  1. Register context               │
+         │     compact.register(              │
+         │       content=full_context,        │
+         │       category="handoff",          │
+         │       agent="hanuman"              │
+         │     ) → "7KE2N"                    │
+         │                                    │
+         │  2. Dispatch message               │
+         │     {                              │
+         │       "to": "ganesha",             │
+         │       "prompt": "...",             │
+         │       "context_id": "7KE2N"  ─────┼──► compact.resolve("7KE2N")
+         │     }                              │         │
+         │                                    │         ▼
+         │                                    │    full context
+         │                                    │    loaded in target
+         │                                    │    agent's context
+         │                                    │
+         │                          If resolve("7KE2N") → None:
+         │                          "I don't have context for
+         │                           7KE2N. I cannot proceed
+         │                           without it."
+         │                          (anti-hallucination contract)
+```
 
-**In practice:** every `safe-app-*` README carries:
-1. Plain prose in the body — warm register, Norse myth framing where it fits, no persona names
-2. Sean's signoff at the bottom, above ΔΣ=42
+TTL: handoff context = 1 hour. Stored in Postgres `compact_contexts` table (new table, Task 2).
 
-Internal personas and their lore live in `docs/internal/personas/` — available for development context, not shipped to users.
+---
 
-**Task 9 revised:** `docs/internal/personas/gerald.md` — internal lore (Oakenscroll's entry, verbatim from Grove id 72). Not consumer-facing.
-**Task 10 revised:** Consumer onboarding pass — plain-language warm-register prose, one per `safe-app-*` repo. No character names.
+## Part 7 — Grove Channels
+
+```
+  ┌─────────────────────────────────────────────────────────┐
+  │  GROVE CHANNELS FOR DISPATCH                            │
+  ├──────────────────────┬──────────────────────────────────┤
+  │  #dispatch           │  All agent-to-agent tasks.       │
+  │                      │  `to:` field is client-side      │
+  │                      │  filtered. Full audit trail.     │
+  │                      │  Unread indicator: • N           │
+  ├──────────────────────┼──────────────────────────────────┤
+  │  #dispatch-          │  escalation_required: true only. │
+  │  escalations         │  OPERATOR replies to authorize.  │
+  │                      │  • 2 = the entire ESCALATE UI    │
+  ├──────────────────────┼──────────────────────────────────┤
+  │  #dispatch-          │  depth > 3 violations.           │
+  │  violations          │  OPERATOR-only resolution.       │
+  │                      │  Never auto-cleared.             │
+  └──────────────────────┴──────────────────────────────────┘
+```
+
+---
+
+## Part 8 — Grove → LOAM Ingest
+
+```
+  SESSION SHUTDOWN (/shutdown skill)
+         │
+         ▼
+  run_grove_ingest()               ← Task 3 wires this into shutdown.py
+         │
+         ├── Load cursors
+         │   /tmp/willow-grove-cursor-{AGENT}.json
+         │   { "architecture": 95, "general": 12, ... }
+         │
+         ├── For each channel in scope:
+         │   ["architecture", "general", "handoffs",
+         │    "dispatch", "dispatch-escalations"]
+         │
+         │   grove_get_history(since_id=cursor[channel])
+         │        │
+         │        ▼
+         │   new messages?
+         │        │
+         │   dump to file:
+         │   ~/agents/{AGENT}/grove/{channel}/{YYYYMMDD}.md
+         │        │
+         │   willow_knowledge_ingest(
+         │     title="#architecture — 2026-04-22",
+         │     summary=file_path,
+         │     source_type="grove_channel",
+         │     domain=AGENT
+         │   )
+         │        │
+         │   update cursor to last message id
+         │
+         └── Done
+
+  NOTE: Task 0 (architecture channel retroactive ingest) is DONE.
+        atom 5A671776, 76 messages, ids 7–95.
+        Cursor set. Next ingest picks up from id 95.
+```
+
+---
+
+## Part 9 — Willow Grove UI (Layout Presets)
+
+```
+  DEFAULT (current)
+  ┌──────────────────────┬────────────────────────────────┐
+  │  COMMAND (chat)      │  STATUS · AGENTS · ROUTING     │
+  │                      │  GROVE channels                │
+  │                      │  CARDS grid                    │
+  └──────────────────────┴────────────────────────────────┘
+
+  DISCORD (channel-first)
+  ┌──────────┬───────────────────────────┬────────────────┐
+  │ CHANNELS │  channel message stream   │ AGENTS / STATUS│
+  │ #general │                           │ hanuman running│
+  │ #arch    │  messages scroll here     │ heimdallr idle │
+  │ #dispatch│                           │                │
+  │          │  ▸ type here...           │ CARDS          │
+  └──────────┴───────────────────────────┴────────────────┘
+  Requires ≥120 columns. Graceful fallback to default if narrower.
+
+  CLAUDE (command-dominant)
+  ┌────────────────────────────────┬───────────────────────┐
+  │  COMMAND (wide chat)           │  STATUS               │
+  │                                │  GROVE (compact)      │
+  │                                │  CARDS (compact)      │
+  └────────────────────────────────┴───────────────────────┘
+```
+
+Skin dataclass gains one field: `layout_preset: str = "default"`.
+Preset selection at first run → stored to SOIL under `willow-dashboard/config/layout_preset`.
 
 ---
 
@@ -218,28 +397,114 @@ Internal personas and their lore live in `docs/internal/personas/` — available
 
 *Not to be started until Sean authorizes this spec.*
 
-**Task 1** — `willow/constants.py` — tier definitions, TTL thresholds  
-**Task 2** — DDL: `willow.dispatch_tasks` table (mirrors SEP-1686 state machine)  
-**Task 3** — `session_start.py` — subscribe to `#dispatch`, write inbox file  
-**Task 4** — `prompt_submit.py` — read inbox, inject `[DISPATCH]` context on operator turn  
-**Task 5** — `willow_route` full implementation (Plan 4 prerequisite — do first)  
-**Task 6** — `sap_mcp.py` — `willow_dispatch` tool (posts to Grove, creates SEP-1686 task)  
-**Task 7** — `sap_mcp.py` — `willow_dispatch_result` tool (writes Binder atom, closes task)  
-**Task 8** — Dashboard ESCALATE region (post-v1, after dispatch exists to render)  
-**Task 9** — `docs/lore/gerald.md` — Oakenscroll writes Gerald's full entry  
-**Task 10** — Grandma Oracle onboarding layer — one per safe-app-* repo
+**Task 0** ✅ DONE — Retroactive ingest of `grove.architecture` into LOAM.
+76 messages, atom `5A671776`, cursor at id 95.
 
-**Prerequisite:** Plan 4 (willow_route full implementation) must ship before Task 5. Dispatch without a routing oracle is a gun without a trigger.
+**Task 1** — `willow/constants.py`
+Tier definitions (ENGINEER/OPERATOR/WORKER/WITNESS), TTL thresholds
+(`AGENT_RUNNING_TTL_S=120`, `AGENT_IDLE_TTL_S=900`, `AGENT_STALE_TTL_S=3600`),
+dispatch channel names, Grove channel list for ingest.
+
+**Task 2** — DDL: `willow.dispatch_tasks` + `compact_contexts` tables.
+`dispatch_tasks` mirrors SEP-1686 (`id`, `to`, `from`, `prompt`, `depth`, `status`,
+`created_at`, `resolved_at`, `result_atom_id`).
+`compact_contexts` stores base17-compact references (`id`, `content`, `category`,
+`agent`, `created_at`, `expires_at`).
+
+**Task 3** — `shutdown.py` — wire `run_grove_ingest()`.
+Cursor-per-channel, dump to file, ingest path to LOAM, update session_atom for
+matching card. Channels: architecture, general, handoffs, dispatch,
+dispatch-escalations.
+
+**Task 4** — `willow-dashboard/skins.py`
+Add `layout_preset` field. Preset-aware renderer dispatcher.
+Implement `default` and `discord` presets. Graceful fallback for narrow terminals.
+
+**Task 5** — `willow-dashboard/dashboard.py`
+Wire `_load_session_atom(card_id)` → `willow_knowledge_search`.
+Populate `session_atom` in `draw_expanded_card`.
+
+**Task 6** — Grove channels
+Create `#dispatch`, `#dispatch-escalations`, `#dispatch-violations`.
+
+**Task 7** — `session_start.py`
+Subscribe to `#dispatch` on boot.
+Write messages addressed to `AGENT` to `/tmp/willow-dispatch-inbox-{AGENT}.json`.
+
+**Task 8** — `prompt_submit.py`
+Read dispatch inbox on first operator turn.
+Inject `[DISPATCH]` context block. Guard: only on operator turn, never on
+unattended start.
+
+**Task 9** — `willow_route` full implementation *(Plan 4 prerequisite)*.
+Oracle must ship before Task 10. Dispatch without oracle is a gun without trigger.
+
+**Task 10** — `sap_mcp.py` — `willow_dispatch` tool.
+Posts to `#dispatch`, creates SEP-1686 task, selects transport:
+- RUNNING → `SendMessage`
+- OFFLINE → `RemoteTrigger.run()`
+- STALE → `CronCreate(recurring=False, durable=True)`
+
+Sets `escalation_required` from oracle decision.
+
+**Task 11** — `sap_mcp.py` — `willow_dispatch_result` tool.
+Writes LOAM knowledge atom (authored by target agent).
+Updates `session_atom` for `card_id`.
+Closes SEP-1686 task.
+Posts result to `#dispatch-results`.
+
+**Task 12** — `docs/lore/gerald.md`
+Internal lore. Oakenscroll's entry from Grove id 72, verbatim.
+Governance without lore is policy without soul.
+
+**Task 13** — First-run layout preset picker.
+One screen, three options, stored to SOIL.
 
 ---
 
 ## Risks / Open Gates
 
-- **Plan 4 is a prerequisite.** The dispatch oracle (`willow_route`) must be implemented before Task 5. Sequence: Plan 4 DDL → oracle → Plan 5.
-- **SEP-1686 is experimental.** If the spec changes before we implement, Tasks 2–7 may need adjustment. Watch `modelcontextprotocol/modelcontextprotocol` for breaking changes.
-- **No tests yet.** This is design-only. Full TDD cycle required before any dispatch code ships. Plan 5 passes only when dispatch routes a real task, deposits a real Binder atom, and respects depth > 3 hard stop.
-- **ESCALATE region is post-v1.** The dashboard surface for Dual Commit authorization is specified but not yet built. `escalation_required: true` tasks will accumulate in `#dispatch-escalations` until it ships.
-- **Gerald lore is oral until written.** Oakenscroll's entry exists in Grove (id 72, architecture channel). It needs to live in `docs/lore/gerald.md` before Plan 5 ships — governance without lore is policy without soul.
+```
+  ┌────────────────────────────────────────────────────────────┐
+  │ RISK                     │ GATE / MITIGATION              │
+  ├────────────────────────────────────────────────────────────┤
+  │ Task 9 (willow_route)    │ Plan 4 must ship first.        │
+  │ blocks Task 10           │ Sequence enforced.             │
+  ├────────────────────────────────────────────────────────────┤
+  │ RemoteTrigger gated on   │ Verify tengu_surreal_dali flag  │
+  │ tengu_surreal_dali       │ before implementing Task 10.   │
+  │ feature flag             │ Fallback: CronCreate for all   │
+  │                          │ non-running agents.            │
+  ├────────────────────────────────────────────────────────────┤
+  │ SEP-1686 is experimental │ Watch MCP spec repo before     │
+  │                          │ committing Tasks 2 and 10.     │
+  ├────────────────────────────────────────────────────────────┤
+  │ No tests yet             │ Full TDD cycle required.       │
+  │                          │ Plan 5 passes only when a real │
+  │                          │ task routes, deposits a real   │
+  │                          │ LOAM atom, updates a real card │
+  │                          │ session_atom, and depth > 3    │
+  │                          │ hard stop fires correctly.     │
+  ├────────────────────────────────────────────────────────────┤
+  │ Gerald lore is oral      │ Task 12 before ship.           │
+  │ until written            │ Governance without lore is     │
+  │                          │ policy without soul.           │
+  ├────────────────────────────────────────────────────────────┤
+  │ discord preset needs     │ Add graceful fallback to       │
+  │ ≥120 columns             │ default when terminal narrower. │
+  └────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## What We Are NOT Building
+
+- A custom message transport (CC's `SendMessage` / `RemoteTrigger` / `CronCreate` already exist)
+- A custom agent spawner (CC's swarm/teammate model already exists)
+- A custom availability signal (SEP-1686 task state already exists)
+- A second governance layer (Dual Commit via `#dispatch-escalations` IS the governance)
+
+Grove `#dispatch` is the audit trail. Not the pipe.
 
 ---
 

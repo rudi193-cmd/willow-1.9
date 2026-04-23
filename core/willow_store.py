@@ -40,16 +40,26 @@ class WillowStore:
         conn.commit()
         return conn
 
+    def _ts_cols(self, conn: sqlite3.Connection) -> list[str]:
+        """Return timestamp-like column names that need datetime('now') on insert."""
+        ts_names = {"created", "created_at", "updated_at", "modified_at"}
+        all_cols = conn.execute("PRAGMA table_info(records)").fetchall()
+        return [row[1] for row in all_cols if row[1] in ts_names]
+
     def put(self, collection: str, record: dict, record_id: Optional[str] = None,
             deviation: float = 0.0) -> tuple:
         rid = record_id or record.get("_id") or record.get("id") or record.get("b17")
         if not rid:
             raise ValueError(f"record must have an 'id', '_id', or 'b17' field — got keys: {list(record.keys())}")
         conn = self._conn(collection)
-        conn.execute(
-            "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)",
-            (rid, json.dumps(record))
-        )
+        ts_cols = self._ts_cols(conn)
+        extra_cols = ", ".join(ts_cols)
+        extra_vals = ", ".join(["datetime('now')"] * len(ts_cols))
+        if ts_cols:
+            sql = f"INSERT OR REPLACE INTO records (id, data, {extra_cols}) VALUES (?, ?, {extra_vals})"
+        else:
+            sql = "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)"
+        conn.execute(sql, (rid, json.dumps(record)))
         conn.commit()
         conn.close()
         return rid, "work_quiet", []
@@ -64,7 +74,9 @@ class WillowStore:
 
     def list(self, collection: str) -> list:
         conn = self._conn(collection)
-        rows = conn.execute("SELECT data FROM records ORDER BY created DESC").fetchall()
+        ts_cols = self._ts_cols(conn)
+        order = f"ORDER BY {ts_cols[0]} DESC" if ts_cols else ""
+        rows = conn.execute(f"SELECT data FROM records {order}").fetchall()
         conn.close()
         return [json.loads(r["data"]) for r in rows]
 
