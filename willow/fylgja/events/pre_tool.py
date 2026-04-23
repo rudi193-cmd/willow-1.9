@@ -20,6 +20,13 @@ DEPTH_FILE = Path("/tmp/willow-agent-depth-stack.txt")
 BASH_BLOCKS = [
     (r"\bsqlite3\b",
      "Direct SQLite access is not allowed. Use MCP: store_get / store_list, or Read for schema inspection."),
+    (r"^\s*psql\s",
+     "Direct psql access is not allowed. Use MCP: willow_query or pg_bridge via Python. "
+     "Schema inspection: Read pg_bridge.py or use store_list."),
+    (r"^\s*(cat|head|tail)\s",
+     "Use the Read tool instead of cat/head/tail — it provides line numbers and better context."),
+    (r"^\s*ls\s",
+     "Use Glob tool for file listings — it supports patterns and integrates with the KB."),
 ]
 
 F5_PROSE_TOOLS = {
@@ -41,6 +48,35 @@ def check_agent_block(subagent_type: str) -> str | None:
         return ("Explore subagent is blocked. Use MCP: store_search, willow_knowledge_search, "
                 "store_get, store_list — or Glob/Grep/Read directly.")
     return None
+
+
+def _mcp_store_search(query: str) -> list:
+    try:
+        result = call("store_search", {
+            "app_id": AGENT,
+            "collection": "hanuman/file-index",
+            "query": query,
+        }, timeout=3)
+        return result if isinstance(result, list) else []
+    except Exception:
+        return []
+
+
+def check_kb_first(path: str) -> str | None:
+    """
+    Check if a file path is indexed in the KB file-index.
+    Returns a KB-FIRST advisory if found (suggesting reading from KB instead of disk),
+    or None if not indexed.
+    """
+    filename = Path(path).name
+    results = _mcp_store_search(filename)
+    if not results:
+        return None
+    hit = results[0]
+    return (
+        f"[KB-FIRST] '{filename}' is indexed (collection: {hit.get('collection', 'hanuman/file-index')}, "
+        f"id: {hit.get('id', '?')}). Consider reading from KB before disk."
+    )
 
 
 def _read_depth() -> int:
