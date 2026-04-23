@@ -81,6 +81,6 @@ def test_sleipnir_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     import importlib, root as seed
     importlib.reload(seed)
-    seed.sleipnir(skip_pg=True, skip_socket=True, skip_gpg=True)
-    seed.sleipnir(skip_pg=True, skip_socket=True, skip_gpg=True)
+    seed.sleipnir(skip_pg=True, skip_socket=True, skip_gpg=True, no_chain=True)
+    seed.sleipnir(skip_pg=True, skip_socket=True, skip_gpg=True, no_chain=True)
     assert (tmp_path / ".willow" / "version").exists()

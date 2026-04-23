@@ -219,6 +219,7 @@ def sleipnir(
     skip_pg: bool = False,
     skip_socket: bool = False,
     skip_gpg: bool = False,
+    no_chain: bool = False,
 ) -> None:
     """Run all 8 steps. Idempotent."""
     print()
@@ -245,6 +246,8 @@ def sleipnir(
         fn()
         print("done")
 
+    if no_chain:
+        return
     print()
     shoot = WILLOW_ROOT / "shoot.py"
     if shoot.exists():
