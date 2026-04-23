@@ -21,6 +21,7 @@ ANCHOR_CACHE = Path.home() / ".willow" / "session_anchor.json"
 STATE_FILE = Path.home() / ".willow" / "anchor_state.json"
 TURNS_FILE = Path.home() / "agents" / AGENT / "cache" / "turns.txt"
 ACTIVE_BUILD_FILE = Path("/tmp/hanuman-active-build.json")
+DISPATCH_INBOX = Path(f"/tmp/willow-dispatch-inbox-{AGENT}.json")
 
 TRUST_LEVELS = {0: "OBSERVER", 1: "WORKER", 2: "OPERATOR", 3: "ENGINEER", 4: "ARCHITECT"}
 PERMISSION_LEVELS = {
@@ -156,6 +157,32 @@ def _log_turn(prompt: str, session_id: str) -> None:
         pass
 
 
+def _inject_dispatch_inbox() -> None:
+    """
+    On first operator turn only: read dispatch inbox and inject [DISPATCH] block.
+    Guard: never fires on subsequent turns or unattended session start.
+    """
+    if not is_first_turn():
+        return
+    if not DISPATCH_INBOX.exists():
+        return
+    try:
+        messages = json.loads(DISPATCH_INBOX.read_text())
+        if not messages:
+            return
+        lines = ["[DISPATCH] You have pending tasks from #dispatch:"]
+        for msg in messages[:5]:
+            sender = msg.get("sender", "?")
+            content = msg.get("content", "")[:200]
+            lines.append(f"  from {sender}: {content}")
+        if len(messages) > 5:
+            lines.append(f"  ... and {len(messages) - 5} more in {DISPATCH_INBOX}")
+        print("\n".join(lines))
+        DISPATCH_INBOX.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _run_build_continue() -> None:
     task = get_active_task()
     if not task:
@@ -179,6 +206,7 @@ def main():
 
     _run_source_ring(session_id)
     _run_anchor()
+    _inject_dispatch_inbox()
     _run_feedback(prompt, session_id)
     _log_turn(prompt, session_id)
     _run_build_continue()

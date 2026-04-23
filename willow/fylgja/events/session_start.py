@@ -126,6 +126,54 @@ def _register_jeles(session_id: str) -> None:
         pass
 
 
+DISPATCH_INBOX = Path(f"/tmp/willow-dispatch-inbox-{AGENT}.json")
+
+
+def _subscribe_dispatch() -> int:
+    """
+    Pull #dispatch messages addressed to this agent since last cursor.
+    Writes unread messages to DISPATCH_INBOX. Returns count of new messages.
+    """
+    cursor_file = Path(f"/tmp/willow-dispatch-cursor-{AGENT}.json")
+    cursors: dict = {}
+    if cursor_file.exists():
+        try:
+            cursors = json.loads(cursor_file.read_text())
+        except Exception:
+            pass
+    since_id = cursors.get("dispatch", 0)
+    try:
+        result = call("grove_get_history", {
+            "channel": "dispatch",
+            "since_id": since_id,
+            "limit": 50,
+        }, timeout=8)
+    except Exception:
+        return 0
+
+    if not isinstance(result, dict):
+        return 0
+    messages = result.get("messages", [])
+    addressed = [
+        m for m in messages
+        if AGENT.lower() in m.get("content", "").lower()
+        or m.get("to", "").lower() == AGENT.lower()
+    ]
+    last_id = max((m.get("id", 0) for m in messages), default=since_id)
+    if last_id > since_id:
+        cursors["dispatch"] = last_id
+        try:
+            cursor_file.write_text(json.dumps(cursors))
+        except Exception:
+            pass
+    if addressed:
+        try:
+            DISPATCH_INBOX.write_text(json.dumps(addressed))
+        except Exception:
+            pass
+    return len(addressed)
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -139,6 +187,9 @@ def main():
     summary.append(_check_willow_status())
     if session_id:
         _register_jeles(session_id)
+    dispatch_count = _subscribe_dispatch()
+    if dispatch_count:
+        summary.append(f"dispatch={dispatch_count}")
 
     lines = ["[INDEX] " + " · ".join(summary)]
     for a in alerts:
