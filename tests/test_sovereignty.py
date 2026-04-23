@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_telemetry_default_is_disabled(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    import importlib, seed
+    import importlib, root as seed
     importlib.reload(seed)
     (tmp_path / ".willow").mkdir(parents=True, exist_ok=True)
     seed.step_telemetry_init()
@@ -19,7 +19,7 @@ def test_telemetry_default_is_disabled(tmp_path, monkeypatch):
 
 def test_telemetry_init_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    import importlib, seed
+    import importlib, root as seed
     importlib.reload(seed)
     (tmp_path / ".willow").mkdir(parents=True, exist_ok=True)
     seed.step_telemetry_init()
@@ -30,7 +30,7 @@ def test_telemetry_init_idempotent(tmp_path, monkeypatch):
 
 def test_willow_dir_has_telemetry_after_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    import importlib, seed
+    import importlib, root as seed
     importlib.reload(seed)
     seed.step_1_dirs()
     seed.step_telemetry_init()
