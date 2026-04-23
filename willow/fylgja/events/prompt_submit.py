@@ -171,13 +171,19 @@ def _run_route(prompt: str, session_id: str) -> None:
     if len(stripped) < _ROUTE_MIN_LEN:
         return
     try:
-        decision = _routing_oracle(stripped, session_id=session_id)
-        agent = decision.get("routed_to", "willow")
-        rule = decision.get("rule_matched", "?")
-        conf = decision.get("confidence", 0.0)
-        latency = decision.get("latency_ms", 0)
-        flag = " ⚑" if conf < 0.7 else ""
-        print(f"[ROUTE] → {agent}  rule={rule}  conf={conf:.2f}  {latency}ms{flag}")
+        # Hook context: rules only, no LLM fallback.
+        # LLM fallback is available via willow_route MCP tool where latency is acceptable.
+        from willow.routing.oracle import match_rules, load_rules
+        import time
+        t0 = time.monotonic()
+        rules = load_rules(session_id)
+        matched = match_rules(stripped, rules)
+        if not matched:
+            return  # no rule match → silently pass, don't call LLM
+        latency = round((time.monotonic() - t0) * 1000)
+        agent = matched["agent"]
+        rule = matched["id"]
+        print(f"[ROUTE] → {agent}  rule={rule}  conf=1.00  {latency}ms")
     except Exception:
         pass
 
