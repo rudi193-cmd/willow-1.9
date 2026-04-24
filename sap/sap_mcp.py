@@ -369,6 +369,11 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
+            name="willow_health",
+            description="Fast (<200ms) MCP server health check: circuit breaker state, pool usage, tool executor, uptime. Use to diagnose hangs without touching Postgres.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
             name="willow_status",
             description="Willow system health: local store + Postgres + Ollama.",
             inputSchema={"type": "object", "properties": {}},
@@ -1058,6 +1063,27 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             except Exception:
                 pass
             result = {"agents": agents, "count": len(agents)}
+
+        elif name == "willow_health":
+            import time as _time
+            try:
+                from pg_bridge import cb_state as _cb_state, _pool as _pg_pool, _pool_maxconn as _pmx
+                cb = _cb_state()
+                pool_used = len(_pg_pool._used) if _pg_pool else 0
+                pool_info = {"used": pool_used, "max": _pmx, "pct": round(pool_used / _pmx * 100)}
+            except Exception as _he:
+                cb = {"error": str(_he)}
+                pool_info = {}
+            executor_threads = len([t for t in __import__("threading").enumerate() if "willow-tool" in t.name])
+            result = {
+                "status": "ok",
+                "circuit_breaker": cb,
+                "pool": pool_info,
+                "tool_executor_threads": executor_threads,
+                "tool_timeout_s": _TOOL_TIMEOUT,
+                "pg_connect_timeout_s": int(os.environ.get("WILLOW_PG_CONNECT_TIMEOUT", "5")),
+                "pg_statement_timeout_ms": int(os.environ.get("WILLOW_PG_STATEMENT_TIMEOUT", "30000")),
+            }
 
         elif name in ("willow_status", "willow_system_status"):
             local_stats = store.stats()

@@ -8,6 +8,8 @@ Schema is correct from first CREATE TABLE. No ALTER TABLE ever.
 import hashlib
 import json
 import os
+import threading
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -221,6 +223,85 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_visit ON knowledge (visit_count DESC);
 """
 
 
+# ── Circuit breaker ───────────────────────────────────────────────────────────
+# Opens after _CB_THRESHOLD failures within _CB_WINDOW seconds.
+# While open, get_connection() raises immediately instead of trying Postgres.
+# Resets automatically after _CB_RESET seconds (half-open probe).
+
+_CB_THRESHOLD = int(os.environ.get("WILLOW_CB_THRESHOLD", "3"))
+_CB_WINDOW    = float(os.environ.get("WILLOW_CB_WINDOW", "60"))
+_CB_RESET     = float(os.environ.get("WILLOW_CB_RESET", "30"))
+
+_cb_lock        = threading.Lock()
+_cb_failures: list = []   # timestamps of recent failures
+_cb_open_until: float = 0.0
+
+
+def _cb_record_failure() -> None:
+    global _cb_open_until
+    now = time.monotonic()
+    with _cb_lock:
+        _cb_failures[:] = [t for t in _cb_failures if now - t < _CB_WINDOW]
+        _cb_failures.append(now)
+        if len(_cb_failures) >= _CB_THRESHOLD:
+            _cb_open_until = now + _CB_RESET
+            import sys as _sys
+            print(
+                f"[pg_bridge] circuit OPEN after {len(_cb_failures)} failures — "
+                f"backing off {_CB_RESET}s",
+                file=_sys.stderr, flush=True,
+            )
+
+
+def _cb_check() -> bool:
+    """Return True if circuit is closed (OK to try). False = open (skip)."""
+    now = time.monotonic()
+    with _cb_lock:
+        if now >= _cb_open_until:
+            return True
+        return False
+
+
+def _cb_reset() -> None:
+    global _cb_open_until
+    with _cb_lock:
+        _cb_failures.clear()
+        _cb_open_until = 0.0
+
+
+def cb_state() -> dict:
+    """Return circuit breaker state dict for health reporting."""
+    now = time.monotonic()
+    with _cb_lock:
+        recent = [t for t in _cb_failures if now - t < _CB_WINDOW]
+        open_for = max(0.0, _cb_open_until - now)
+    return {
+        "status": "open" if open_for > 0 else "closed",
+        "recent_failures": len(recent),
+        "open_for_s": round(open_for, 1),
+    }
+
+
+# ── Pool capacity monitor ─────────────────────────────────────────────────────
+_POOL_WARN_THRESHOLD = float(os.environ.get("WILLOW_POOL_WARN", "0.8"))  # 80%
+_pool_maxconn = 10
+
+
+def _pool_warn_if_near_capacity() -> None:
+    if _pool is None:
+        return
+    try:
+        used = len(_pool._used)
+        if used / _pool_maxconn >= _POOL_WARN_THRESHOLD:
+            import sys as _sys
+            print(
+                f"[pg_bridge] pool at {used}/{_pool_maxconn} connections ({used/_pool_maxconn:.0%})",
+                file=_sys.stderr, flush=True,
+            )
+    except Exception:
+        pass
+
+
 _PG_CONNECT_TIMEOUT = int(os.environ.get("WILLOW_PG_CONNECT_TIMEOUT", "5"))
 _PG_STATEMENT_TIMEOUT = int(os.environ.get("WILLOW_PG_STATEMENT_TIMEOUT", "30000"))  # ms
 _PG_LOCK_TIMEOUT = int(os.environ.get("WILLOW_PG_LOCK_TIMEOUT", "10000"))  # ms
@@ -259,13 +340,23 @@ def _get_pool() -> "psycopg2.pool.SimpleConnectionPool":
 
 
 def get_connection() -> "psycopg2.connection":
+    if not _cb_check():
+        raise RuntimeError("pg_bridge: circuit open — Postgres is degraded, not attempting connection")
+    _pool_warn_if_near_capacity()
     try:
-        return _get_pool().getconn()
-    except Exception:
-        # Pool exhausted or broken — fall back to a direct connection.
+        conn = _get_pool().getconn()
+        _cb_reset()
+        return conn
+    except Exception as _pool_err:
         import sys as _sys
-        print("[pg_bridge] pool exhausted — direct connect fallback", file=_sys.stderr, flush=True)
-        return _connect()
+        print(f"[pg_bridge] pool error ({_pool_err}) — direct connect fallback", file=_sys.stderr, flush=True)
+        try:
+            conn = _connect()
+            _cb_reset()
+            return conn
+        except Exception as _direct_err:
+            _cb_record_failure()
+            raise _direct_err
 
 
 def release_connection(conn: "psycopg2.connection") -> None:
@@ -282,8 +373,11 @@ def release_connection(conn: "psycopg2.connection") -> None:
 
 def try_connect() -> Optional["psycopg2.connection"]:
     try:
-        return _connect()
+        conn = _connect()
+        _cb_reset()
+        return conn
     except Exception:
+        _cb_record_failure()
         return None
 
 
