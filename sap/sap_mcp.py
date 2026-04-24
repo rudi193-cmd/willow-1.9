@@ -102,10 +102,6 @@ except ImportError:
 
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
-from willow.forks import (
-    fork_create, fork_join, fork_log as _fork_log, fork_merge,
-    fork_delete, fork_status, fork_list,
-)
 
 # ── Postgres bridge ───────────────────────────────────────────────────────────
 try:
@@ -1285,40 +1281,41 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             result = {"dispatch_id": _did, "atom_id": atom_id, "status": "completed"}
 
         # ── Forks ─────────────────────────────────────────────────────────────
-        elif name == "willow_fork_create":
-            with PgBridge() as b:
-                result = fork_create(b, title=arguments["title"],
-                    created_by=arguments["created_by"],
-                    topic=arguments.get("topic", ""),
-                    fork_id=arguments.get("fork_id"))
-
-        elif name == "willow_fork_join":
-            with PgBridge() as b:
-                result = fork_join(b, arguments["fork_id"], arguments["component"])
-
-        elif name == "willow_fork_log":
-            with PgBridge() as b:
-                result = _fork_log(b, arguments["fork_id"], arguments["component"],
-                    arguments["type"], arguments["ref"],
-                    arguments.get("description", ""))
-
-        elif name == "willow_fork_merge":
-            with PgBridge() as b:
-                result = fork_merge(b, arguments["fork_id"],
-                    arguments.get("outcome_note", ""))
-
-        elif name == "willow_fork_delete":
-            with PgBridge() as b:
-                result = fork_delete(b, arguments["fork_id"],
-                    arguments.get("reason", ""))
-
-        elif name == "willow_fork_status":
-            with PgBridge() as b:
-                result = fork_status(b, arguments["fork_id"])
-
-        elif name == "willow_fork_list":
-            with PgBridge() as b:
-                result = fork_list(b, status=arguments.get("status", "open"))
+        elif name in ("willow_fork_create", "willow_fork_join", "willow_fork_log",
+                      "willow_fork_merge", "willow_fork_delete",
+                      "willow_fork_status", "willow_fork_list"):
+            from willow.forks import (
+                fork_create, fork_join, fork_log as _fork_log, fork_merge,
+                fork_delete, fork_status, fork_list,
+            )
+            if name == "willow_fork_create":
+                with PgBridge() as b:
+                    result = fork_create(b, title=arguments["title"],
+                        created_by=arguments["created_by"],
+                        topic=arguments.get("topic", ""),
+                        fork_id=arguments.get("fork_id"))
+            elif name == "willow_fork_join":
+                with PgBridge() as b:
+                    result = fork_join(b, arguments["fork_id"], arguments["component"])
+            elif name == "willow_fork_log":
+                with PgBridge() as b:
+                    result = _fork_log(b, arguments["fork_id"], arguments["component"],
+                        arguments["type"], arguments["ref"],
+                        arguments.get("description", ""))
+            elif name == "willow_fork_merge":
+                with PgBridge() as b:
+                    result = fork_merge(b, arguments["fork_id"],
+                        arguments.get("outcome_note", ""))
+            elif name == "willow_fork_delete":
+                with PgBridge() as b:
+                    result = fork_delete(b, arguments["fork_id"],
+                        arguments.get("reason", ""))
+            elif name == "willow_fork_status":
+                with PgBridge() as b:
+                    result = fork_status(b, arguments["fork_id"])
+            elif name == "willow_fork_list":
+                with PgBridge() as b:
+                    result = fork_list(b, status=arguments.get("status", "open"))
 
         elif name == "willow_route":
             _msg = arguments.get("message", "")
