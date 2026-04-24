@@ -31,7 +31,10 @@ CREATE TABLE IF NOT EXISTS knowledge (
     summary     TEXT,
     content     JSONB,
     source_type TEXT,
-    category    TEXT
+    category    TEXT,
+    visit_count INTEGER NOT NULL DEFAULT 0,
+    weight      FLOAT NOT NULL DEFAULT 1.0,
+    last_visited TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS cmb_atoms (
@@ -171,6 +174,16 @@ CREATE TABLE IF NOT EXISTS compact_contexts (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at  TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS routing_decisions (
+    id          TEXT PRIMARY KEY,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    prompt_hash TEXT NOT NULL,
+    session_id  TEXT,
+    rule_id     TEXT,
+    confidence  FLOAT,
+    decision    JSONB NOT NULL
+);
 """
 
 # Columns added after initial deployment — safe to run repeatedly.
@@ -182,6 +195,9 @@ _MIGRATIONS = [
     "ALTER TABLE frank_ledger ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'global'",
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS trust TEXT DEFAULT 'WORKER'",
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS folder_root TEXT",
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS visit_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS weight FLOAT NOT NULL DEFAULT 1.0",
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS last_visited TIMESTAMPTZ",
 ]
 
 _INDEXES = """
@@ -198,6 +214,10 @@ CREATE INDEX IF NOT EXISTS idx_opus_atoms_domain ON opus_atoms (domain);
 CREATE INDEX IF NOT EXISTS idx_feedback_domain ON feedback (domain);
 CREATE INDEX IF NOT EXISTS idx_jeles_sessions_agent ON jeles_sessions (agent);
 CREATE INDEX IF NOT EXISTS idx_jeles_atoms_jsonl ON jeles_atoms (jsonl_id);
+CREATE INDEX IF NOT EXISTS idx_routing_decisions_session ON routing_decisions (session_id);
+CREATE INDEX IF NOT EXISTS idx_routing_decisions_created ON routing_decisions (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_weight ON knowledge (weight DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_visit ON knowledge (visit_count DESC);
 """
 
 
