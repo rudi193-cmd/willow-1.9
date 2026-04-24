@@ -141,3 +141,26 @@ class WillowStore:
             self.put(collection, record)
         action = "work_quiet"
         return record_id, action, []
+
+    def add_edge(self, from_id: str, to_id: str, relation: str,
+                 context: str = "") -> tuple:
+        rid = f"{from_id}__{relation}__{to_id}"
+        record = {
+            "id": rid,
+            "from_id": from_id,
+            "to_id": to_id,
+            "relation": relation,
+            "context": context,
+        }
+        return self.put("_graph/edges", record, record_id=rid)
+
+    def edges_for(self, record_id: str) -> list:
+        conn = self._conn("_graph/edges")
+        rows = conn.execute("SELECT data FROM records").fetchall()
+        conn.close()
+        results = []
+        for row in rows:
+            edge = json.loads(row["data"])
+            if edge.get("from_id") == record_id or edge.get("to_id") == record_id:
+                results.append(edge)
+        return results
