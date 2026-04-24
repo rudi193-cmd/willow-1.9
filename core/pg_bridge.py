@@ -230,6 +230,44 @@ def _connect() -> "psycopg2.connection":
     )
 
 
+# Module-level connection pool — shared across all PgBridge instances in this process.
+# minconn=1 keeps one warm; maxconn=10 caps total connections so scripts and the MCP
+# server never exhaust Postgres's connection slots simultaneously.
+_pool: Optional["psycopg2.pool.SimpleConnectionPool"] = None
+
+
+def _get_pool() -> "psycopg2.pool.SimpleConnectionPool":
+    global _pool
+    if _pool is None:
+        from psycopg2 import pool as _pg_pool
+        _pool = _pg_pool.SimpleConnectionPool(
+            minconn=1,
+            maxconn=10,
+            dbname=os.environ.get("WILLOW_PG_DB", "willow_19"),
+            user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
+            host=os.environ.get("WILLOW_PG_HOST"),
+            port=os.environ.get("WILLOW_PG_PORT"),
+        )
+        conn = _pool.getconn()
+        init_schema(conn)
+        _pool.putconn(conn)
+    return _pool
+
+
+def get_connection() -> "psycopg2.connection":
+    return _get_pool().getconn()
+
+
+def release_connection(conn: "psycopg2.connection") -> None:
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def try_connect() -> Optional["psycopg2.connection"]:
     try:
         return _connect()
@@ -248,20 +286,39 @@ def init_schema(conn: "psycopg2.connection") -> None:
 
 class PgBridge:
     def __init__(self):
-        self.conn = _connect()
+        self.conn = get_connection()
         self._last_ingest_error = None
+
+    def close(self) -> None:
+        """Return connection to pool. Safe to call multiple times."""
+        if self.conn is not None:
+            release_connection(self.conn)
+            self.conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
 
     # ── Connection resilience ─────────────────────────────────────────────────
 
     def _ensure_conn(self):
-        """Reconnect if the connection was dropped (handles DDoS-induced disconnects)."""
+        """Re-acquire from pool if connection was dropped."""
+        if self.conn is None:
+            self.conn = get_connection()
+            return
         try:
             self.conn.cursor().execute("SELECT 1")
         except Exception:
             try:
-                self.conn = _connect()
+                release_connection(self.conn)
             except Exception:
                 pass
+            try:
+                self.conn = get_connection()
+            except Exception:
+                self.conn = None
 
     @staticmethod
     def gen_id(length: int = 5) -> str:

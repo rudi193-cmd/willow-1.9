@@ -1103,14 +1103,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             else:
                 # Write to Postgres dispatch_tasks
                 try:
-                    _pg = PgBridge()
-                    with _pg.conn.cursor() as _cur:
-                        _cur.execute("""
-                            INSERT INTO dispatch_tasks
-                                (id, to_agent, from_agent, prompt, context_id, card_id, reply_to, depth, status)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
-                        """, (_did, _to, _from, _prompt, _ctx_id, _card_id, _reply, _depth))
-                    _pg.conn.commit(); _pg.conn.close()
+                    with PgBridge() as _pg:
+                        with _pg.conn.cursor() as _cur:
+                            _cur.execute("""
+                                INSERT INTO dispatch_tasks
+                                    (id, to_agent, from_agent, prompt, context_id, card_id, reply_to, depth, status)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                            """, (_did, _to, _from, _prompt, _ctx_id, _card_id, _reply, _depth))
+                        _pg.conn.commit()
                 except Exception:
                     pass
                 # Post to #dispatch audit trail
