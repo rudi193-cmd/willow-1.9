@@ -102,6 +102,10 @@ except ImportError:
 
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
+from willow.forks import (
+    fork_create, fork_join, fork_log as _fork_log, fork_merge,
+    fork_delete, fork_status, fork_list,
+)
 
 # ── Postgres bridge ───────────────────────────────────────────────────────────
 try:
@@ -434,6 +438,73 @@ async def list_tools() -> list[types.Tool]:
                 },
                 "required": ["text"],
             },
+        ),
+        # ── Forks ─────────────────────────────────────────────────────────────
+        types.Tool(
+            name="willow_fork_create",
+            description="Create a new fork — a named, bounded unit of work.",
+            inputSchema={"type": "object", "properties": {
+                "title":      {"type": "string"},
+                "created_by": {"type": "string"},
+                "topic":      {"type": "string"},
+                "fork_id":    {"type": "string"},
+                "app_id":     {"type": "string"},
+            }, "required": ["title", "created_by", "app_id"]},
+        ),
+        types.Tool(
+            name="willow_fork_join",
+            description="Join an existing fork as a participant component.",
+            inputSchema={"type": "object", "properties": {
+                "fork_id":   {"type": "string"},
+                "component": {"type": "string"},
+                "app_id":    {"type": "string"},
+            }, "required": ["fork_id", "component", "app_id"]},
+        ),
+        types.Tool(
+            name="willow_fork_log",
+            description="Log a change to an open fork.",
+            inputSchema={"type": "object", "properties": {
+                "fork_id":     {"type": "string"},
+                "component":   {"type": "string"},
+                "type":        {"type": "string"},
+                "ref":         {"type": "string"},
+                "description": {"type": "string"},
+                "app_id":      {"type": "string"},
+            }, "required": ["fork_id", "component", "type", "ref", "app_id"]},
+        ),
+        types.Tool(
+            name="willow_fork_merge",
+            description="Merge an open fork — promotes KB atoms to permanent.",
+            inputSchema={"type": "object", "properties": {
+                "fork_id":      {"type": "string"},
+                "outcome_note": {"type": "string"},
+                "app_id":       {"type": "string"},
+            }, "required": ["fork_id", "app_id"]},
+        ),
+        types.Tool(
+            name="willow_fork_delete",
+            description="Delete an open fork — archives KB atoms.",
+            inputSchema={"type": "object", "properties": {
+                "fork_id": {"type": "string"},
+                "reason":  {"type": "string"},
+                "app_id":  {"type": "string"},
+            }, "required": ["fork_id", "app_id"]},
+        ),
+        types.Tool(
+            name="willow_fork_status",
+            description="Get the full status of a fork.",
+            inputSchema={"type": "object", "properties": {
+                "fork_id": {"type": "string"},
+                "app_id":  {"type": "string"},
+            }, "required": ["fork_id", "app_id"]},
+        ),
+        types.Tool(
+            name="willow_fork_list",
+            description="List forks by status.",
+            inputSchema={"type": "object", "properties": {
+                "status": {"type": "string", "enum": ["open", "merged", "deleted"]},
+                "app_id": {"type": "string"},
+            }, "required": ["app_id"]},
         ),
         types.Tool(
             name="willow_route",
@@ -1212,6 +1283,42 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             except Exception:
                 pass
             result = {"dispatch_id": _did, "atom_id": atom_id, "status": "completed"}
+
+        # ── Forks ─────────────────────────────────────────────────────────────
+        elif name == "willow_fork_create":
+            with PgBridge() as b:
+                result = fork_create(b, title=arguments["title"],
+                    created_by=arguments["created_by"],
+                    topic=arguments.get("topic", ""),
+                    fork_id=arguments.get("fork_id"))
+
+        elif name == "willow_fork_join":
+            with PgBridge() as b:
+                result = fork_join(b, arguments["fork_id"], arguments["component"])
+
+        elif name == "willow_fork_log":
+            with PgBridge() as b:
+                result = _fork_log(b, arguments["fork_id"], arguments["component"],
+                    arguments["type"], arguments["ref"],
+                    arguments.get("description", ""))
+
+        elif name == "willow_fork_merge":
+            with PgBridge() as b:
+                result = fork_merge(b, arguments["fork_id"],
+                    arguments.get("outcome_note", ""))
+
+        elif name == "willow_fork_delete":
+            with PgBridge() as b:
+                result = fork_delete(b, arguments["fork_id"],
+                    arguments.get("reason", ""))
+
+        elif name == "willow_fork_status":
+            with PgBridge() as b:
+                result = fork_status(b, arguments["fork_id"])
+
+        elif name == "willow_fork_list":
+            with PgBridge() as b:
+                result = fork_list(b, status=arguments.get("status", "open"))
 
         elif name == "willow_route":
             _msg = arguments.get("message", "")
