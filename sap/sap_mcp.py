@@ -1280,42 +1280,117 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                 pass
             result = {"dispatch_id": _did, "atom_id": atom_id, "status": "completed"}
 
-        # ── Forks ─────────────────────────────────────────────────────────────
-        elif name in ("willow_fork_create", "willow_fork_join", "willow_fork_log",
-                      "willow_fork_merge", "willow_fork_delete",
-                      "willow_fork_status", "willow_fork_list"):
-            from willow.forks import (
-                fork_create, fork_join, fork_log as _fork_log, fork_merge,
-                fork_delete, fork_status, fork_list,
-            )
-            if name == "willow_fork_create":
-                with PgBridge() as b:
-                    result = fork_create(b, title=arguments["title"],
-                        created_by=arguments["created_by"],
-                        topic=arguments.get("topic", ""),
-                        fork_id=arguments.get("fork_id"))
-            elif name == "willow_fork_join":
-                with PgBridge() as b:
-                    result = fork_join(b, arguments["fork_id"], arguments["component"])
-            elif name == "willow_fork_log":
-                with PgBridge() as b:
-                    result = _fork_log(b, arguments["fork_id"], arguments["component"],
-                        arguments["type"], arguments["ref"],
-                        arguments.get("description", ""))
-            elif name == "willow_fork_merge":
-                with PgBridge() as b:
-                    result = fork_merge(b, arguments["fork_id"],
-                        arguments.get("outcome_note", ""))
-            elif name == "willow_fork_delete":
-                with PgBridge() as b:
-                    result = fork_delete(b, arguments["fork_id"],
-                        arguments.get("reason", ""))
-            elif name == "willow_fork_status":
-                with PgBridge() as b:
-                    result = fork_status(b, arguments["fork_id"])
-            elif name == "willow_fork_list":
-                with PgBridge() as b:
-                    result = fork_list(b, status=arguments.get("status", "open"))
+        # ── Forks (inlined — no external imports) ────────────────────────────
+        elif name == "willow_fork_create":
+            import uuid as _uuid_f, json as _jf
+            _fid = arguments.get("fork_id") or f"FORK-{_uuid_f.uuid4().hex[:8].upper()}"
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("""INSERT INTO forks (id,title,created_by,topic,status,participants,changes)
+                    VALUES (%s,%s,%s,%s,'open',%s,'[]')""",
+                    (_fid, arguments["title"], arguments["created_by"],
+                     arguments.get("topic",""), _jf.dumps([arguments["created_by"]])))
+                b.conn.commit()
+            result = {"fork_id": _fid, "status": "open"}
+
+        elif name == "willow_fork_join":
+            import json as _jf
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("SELECT participants FROM forks WHERE id=%s", (arguments["fork_id"],))
+                row = cur.fetchone()
+                if not row:
+                    result = {"error": f"fork {arguments['fork_id']} not found"}
+                else:
+                    parts = row[0] if isinstance(row[0],list) else _jf.loads(row[0])
+                    if arguments["component"] not in parts:
+                        parts.append(arguments["component"])
+                    cur.execute("UPDATE forks SET participants=%s WHERE id=%s",
+                                (_jf.dumps(parts), arguments["fork_id"]))
+                    b.conn.commit()
+                    result = {"fork_id": arguments["fork_id"], "participants": parts}
+
+        elif name == "willow_fork_log":
+            import json as _jf
+            from datetime import datetime as _dt, timezone as _tz
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("SELECT changes FROM forks WHERE id=%s", (arguments["fork_id"],))
+                row = cur.fetchone()
+                if not row:
+                    result = {"error": f"fork {arguments['fork_id']} not found"}
+                else:
+                    changes = row[0] if isinstance(row[0],list) else _jf.loads(row[0])
+                    changes.append({"component": arguments["component"], "type": arguments["type"],
+                        "ref": arguments["ref"], "description": arguments.get("description",""),
+                        "logged_at": _dt.now(_tz.utc).isoformat()})
+                    cur.execute("UPDATE forks SET changes=%s WHERE id=%s",
+                                (_jf.dumps(changes), arguments["fork_id"]))
+                    b.conn.commit()
+                    result = {"logged": True, "change_count": len(changes)}
+
+        elif name == "willow_fork_merge":
+            from datetime import datetime as _dt, timezone as _tz
+            _now = _dt.now(_tz.utc).isoformat()
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("""UPDATE forks SET status='merged',merged_at=%s,outcome_note=%s
+                    WHERE id=%s AND status='open'""",
+                    (_now, arguments.get("outcome_note",""), arguments["fork_id"]))
+                b.conn.commit()
+                if cur.rowcount == 0:
+                    result = {"merged": False, "reason": "not found or not open"}
+                else:
+                    cur.execute("UPDATE knowledge SET fork_id=NULL WHERE fork_id=%s",
+                                (arguments["fork_id"],))
+                    b.conn.commit()
+                    result = {"merged": True, "promoted_count": cur.rowcount}
+
+        elif name == "willow_fork_delete":
+            from datetime import datetime as _dt, timezone as _tz
+            _now = _dt.now(_tz.utc).isoformat()
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("""UPDATE forks SET status='deleted',deleted_at=%s,outcome_note=%s
+                    WHERE id=%s AND status='open'""",
+                    (_now, arguments.get("reason",""), arguments["fork_id"]))
+                b.conn.commit()
+                if cur.rowcount == 0:
+                    result = {"deleted": False, "reason": "not found or not open"}
+                else:
+                    cur.execute("""UPDATE knowledge SET invalid_at=now()
+                        WHERE fork_id=%s AND invalid_at IS NULL""", (arguments["fork_id"],))
+                    b.conn.commit()
+                    result = {"deleted": True, "archived_count": cur.rowcount}
+
+        elif name == "willow_fork_status":
+            import json as _jf
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("""SELECT id,title,created_by,topic,status,participants,changes,
+                    created_at,merged_at,deleted_at,outcome_note FROM forks WHERE id=%s""",
+                    (arguments["fork_id"],))
+                row = cur.fetchone()
+            if not row:
+                result = None
+            else:
+                result = {"fork_id":row[0],"title":row[1],"created_by":row[2],"topic":row[3],
+                    "status":row[4],
+                    "participants":row[5] if isinstance(row[5],list) else _jf.loads(row[5]),
+                    "changes":row[6] if isinstance(row[6],list) else _jf.loads(row[6]),
+                    "created_at":str(row[7]),"merged_at":str(row[8]) if row[8] else None,
+                    "deleted_at":str(row[9]) if row[9] else None,"outcome_note":row[10]}
+
+        elif name == "willow_fork_list":
+            with PgBridge() as b:
+                cur = b.conn.cursor()
+                cur.execute("""SELECT id,title,created_at,created_by,topic,
+                    jsonb_array_length(participants),jsonb_array_length(changes)
+                    FROM forks WHERE status=%s ORDER BY created_at DESC LIMIT 100""",
+                    (arguments.get("status","open"),))
+                result = [{"fork_id":r[0],"title":r[1],"created_at":str(r[2]),
+                    "created_by":r[3],"topic":r[4],
+                    "participant_count":r[5],"change_count":r[6]} for r in cur.fetchall()]
 
         elif name == "willow_route":
             _msg = arguments.get("message", "")
