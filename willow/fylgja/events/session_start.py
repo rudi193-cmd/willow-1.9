@@ -232,17 +232,31 @@ def _run_silent_startup() -> dict:
     except Exception:
         pass
 
+    # Auto-create session fork
+    fork_id = ""
+    try:
+        fork_result = call("willow_fork_create", {
+            "app_id": AGENT,
+            "title": f"Session {datetime.now().strftime('%Y-%m-%d')} — {AGENT}",
+            "created_by": AGENT,
+            "topic": "session",
+        }, timeout=5)
+        fork_id = fork_result.get("fork_id", "") if isinstance(fork_result, dict) else ""
+    except Exception:
+        pass
+
     # Write anchor cache
     try:
         anchor_dir.mkdir(parents=True, exist_ok=True)
         anchor_file.write_text(json.dumps({
             "written_at": datetime.now().isoformat(),
-            "agent": "heimdallr",
+            "agent": AGENT,
             "postgres": result["postgres"],
             "handoff_title": result["handoff_title"],
             "handoff_summary": result["handoff_summary"],
             "open_flags": result["open_flags"],
             "top_flags": result["top_flags"],
+            "fork_id": fork_id,
         }, indent=2))
         state_file.write_text(json.dumps({"prompt_count": 0}))
     except Exception:
@@ -278,7 +292,10 @@ def main():
 
     # Anchor context — always injected
     lines.append(f"[ANCHOR]")
-    lines.append(f"agent={AGENT}  postgres={startup['postgres']}")
+    _fork_line = f"agent={AGENT}  postgres={startup['postgres']}"
+    if startup.get("fork_id"):
+        _fork_line += f"  fork={startup['fork_id']}"
+    lines.append(_fork_line)
     if startup["handoff_title"]:
         lines.append(f"last handoff: {startup['handoff_title']}")
     lines.append(f"open flags: {startup['open_flags']}")
