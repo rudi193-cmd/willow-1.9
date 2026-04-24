@@ -290,6 +290,19 @@ class PgBridge:
 
     # ── Knowledge ────────────────────────────────────────────────────────────
 
+    def increment_visit(self, atom_id: str) -> None:
+        """Increment visit_count and update last_visited + weight for an atom."""
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE knowledge
+                SET visit_count  = visit_count + 1,
+                    last_visited = now(),
+                    weight       = 1.0 + ((visit_count + 1) * 0.1)
+                WHERE id = %s
+            """, (atom_id,))
+        self.conn.commit()
+
     def knowledge_put(self, record: dict) -> str:
         self._ensure_conn()
         with self.conn.cursor() as cur:

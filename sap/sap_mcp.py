@@ -933,6 +933,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     "total": len(knowledge),
                 }
                 _sanitize_result(result, "willow_knowledge_search")
+                for atom in knowledge[:3]:
+                    try:
+                        pg.increment_visit(atom["id"])
+                    except Exception:
+                        pass
 
         elif name == "willow_knowledge_ingest":
             if not pg:
@@ -1162,6 +1167,19 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                     "routed_to": "willow", "rule_matched": "oracle-unavailable",
                     "confidence": 0.5, "latency_ms": 0, "error": str(_re),
                 }
+            if pg and _msg:
+                try:
+                    import hashlib as _hl, uuid as _uuid_r
+                    _ph  = _hl.sha256(_msg.encode()).hexdigest()[:16]
+                    _rid = _uuid_r.uuid4().hex[:12]
+                    with pg.conn.cursor() as _rc:
+                        _rc.execute(
+                            "INSERT INTO routing_decisions (id, prompt_hash, session_id, decision) VALUES (%s,%s,%s,%s)",
+                            (_rid, _ph, _sid, _json.dumps(result))
+                        )
+                    pg.conn.commit()
+                except Exception:
+                    pass
 
         # ── Task Executor (inline — submit = execute, no queue, no daemon) ──────
         elif name == "willow_task_submit":
