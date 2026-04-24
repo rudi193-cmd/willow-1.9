@@ -283,8 +283,88 @@ print('  The Einherjar grow stronger.')
         [[ $fail -eq 0 ]]
         ;;
 
+    start-all)
+        echo "Willow 1.9 — starting all services"
+        _services=(grove-mcp journal-watcher journal-responder willow-dashboard willow-metabolic corpus-watcher)
+        for svc in "${_services[@]}"; do
+            if systemctl --user is-active --quiet "${svc}.service" 2>/dev/null; then
+                echo "  [✓] ${svc} already running"
+            else
+                systemctl --user start "${svc}.service" 2>/dev/null \
+                    && echo "  [↑] ${svc} started" \
+                    || echo "  [✗] ${svc} failed to start"
+            fi
+        done
+        echo ""
+        echo "  Note: sap_mcp.py is spawned by Claude Code only — not managed here."
+        ;;
+
+    stop-all)
+        echo "Willow 1.9 — stopping all services"
+        _services=(willow-dashboard grove-mcp journal-watcher journal-responder willow-metabolic corpus-watcher)
+        for svc in "${_services[@]}"; do
+            systemctl --user stop "${svc}.service" 2>/dev/null \
+                && echo "  [↓] ${svc} stopped" \
+                || echo "  [–] ${svc} was not running"
+        done
+        ;;
+
+    status-all)
+        echo "Willow 1.9 — system status"
+        echo ""
+
+        # Postgres
+        "${WILLOW_PYTHON}" -c "
+import sys, os
+sys.path.insert(0, '${WILLOW_ROOT}')
+os.environ['WILLOW_PG_DB'] = '${WILLOW_PG_DB}'
+from core.pg_bridge import try_connect
+pg = try_connect()
+if pg:
+    cur = pg.cursor()
+    cur.execute('SELECT COUNT(*) FROM knowledge')
+    count = cur.fetchone()[0]
+    print(f'  [\033[32m✓\033[0m] postgres          up ({count} KB atoms)')
+    pg.close()
+else:
+    print('  [\033[31m✗\033[0m] postgres          NOT CONNECTED')
+" 2>/dev/null || echo "  [✗] postgres          error"
+
+        # Ollama
+        curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 \
+            && echo "  [✓] ollama            up" \
+            || echo "  [✗] ollama            unreachable"
+
+        # Systemd user services
+        _services=(grove-mcp journal-watcher journal-responder willow-dashboard willow-metabolic corpus-watcher)
+        for svc in "${_services[@]}"; do
+            if systemctl --user is-active --quiet "${svc}.service" 2>/dev/null; then
+                printf "  [\033[32m✓\033[0m] %-18s running\n" "${svc}"
+            elif systemctl --user is-enabled --quiet "${svc}.service" 2>/dev/null; then
+                printf "  [\033[31m✗\033[0m] %-18s dead (enabled)\n" "${svc}"
+            else
+                printf "  [\033[33m–\033[0m] %-18s disabled\n" "${svc}"
+            fi
+        done
+
+        # MCP server
+        if pgrep -f "sap_mcp.py" > /dev/null 2>&1; then
+            echo "  [✓] sap_mcp.py        running (Claude Code session)"
+        else
+            echo "  [–] sap_mcp.py        not running (start via Claude Code)"
+        fi
+
+        echo ""
+        ;;
+
+    restart)
+        "${BASH_SOURCE[0]}" stop-all
+        sleep 2
+        "${BASH_SOURCE[0]}" start-all
+        ;;
+
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>]"
         exit 1
         ;;
 esac
