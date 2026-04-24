@@ -221,13 +221,24 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_visit ON knowledge (visit_count DESC);
 """
 
 
-def _connect() -> "psycopg2.connection":
-    return psycopg2.connect(
+_PG_CONNECT_TIMEOUT = int(os.environ.get("WILLOW_PG_CONNECT_TIMEOUT", "5"))
+_PG_STATEMENT_TIMEOUT = int(os.environ.get("WILLOW_PG_STATEMENT_TIMEOUT", "30000"))  # ms
+_PG_LOCK_TIMEOUT = int(os.environ.get("WILLOW_PG_LOCK_TIMEOUT", "10000"))  # ms
+
+
+def _pg_kwargs() -> dict:
+    return dict(
         dbname=os.environ.get("WILLOW_PG_DB", "willow_19"),
         user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
-        host=os.environ.get("WILLOW_PG_HOST"),
-        port=os.environ.get("WILLOW_PG_PORT"),
+        host=os.environ.get("WILLOW_PG_HOST") or None,
+        port=os.environ.get("WILLOW_PG_PORT") or None,
+        connect_timeout=_PG_CONNECT_TIMEOUT,
+        options=f"-c statement_timeout={_PG_STATEMENT_TIMEOUT} -c lock_timeout={_PG_LOCK_TIMEOUT}",
     )
+
+
+def _connect() -> "psycopg2.connection":
+    return psycopg2.connect(**_pg_kwargs())
 
 
 # Module-level connection pool — shared across all PgBridge instances in this process.
@@ -240,14 +251,7 @@ def _get_pool() -> "psycopg2.pool.SimpleConnectionPool":
     global _pool
     if _pool is None:
         from psycopg2 import pool as _pg_pool
-        _pool = _pg_pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=10,
-            dbname=os.environ.get("WILLOW_PG_DB", "willow_19"),
-            user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
-            host=os.environ.get("WILLOW_PG_HOST"),
-            port=os.environ.get("WILLOW_PG_PORT"),
-        )
+        _pool = _pg_pool.SimpleConnectionPool(minconn=1, maxconn=10, **_pg_kwargs())
         conn = _pool.getconn()
         init_schema(conn)
         _pool.putconn(conn)
@@ -255,10 +259,18 @@ def _get_pool() -> "psycopg2.pool.SimpleConnectionPool":
 
 
 def get_connection() -> "psycopg2.connection":
-    return _get_pool().getconn()
+    try:
+        return _get_pool().getconn()
+    except Exception:
+        # Pool exhausted or broken — fall back to a direct connection.
+        import sys as _sys
+        print("[pg_bridge] pool exhausted — direct connect fallback", file=_sys.stderr, flush=True)
+        return _connect()
 
 
 def release_connection(conn: "psycopg2.connection") -> None:
+    if conn is None:
+        return
     try:
         _get_pool().putconn(conn)
     except Exception:
@@ -304,12 +316,13 @@ class PgBridge:
     # ── Connection resilience ─────────────────────────────────────────────────
 
     def _ensure_conn(self):
-        """Re-acquire from pool if connection was dropped."""
-        if self.conn is None:
+        """Re-acquire from pool if connection was dropped or gone stale."""
+        if self.conn is None or self.conn.closed:
             self.conn = get_connection()
             return
         try:
-            self.conn.cursor().execute("SELECT 1")
+            with self.conn.cursor() as _cur:
+                _cur.execute("SELECT 1")
         except Exception:
             try:
                 release_connection(self.conn)

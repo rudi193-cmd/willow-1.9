@@ -20,6 +20,8 @@ All 44 tools carry over with no regressions.
 """
 
 import asyncio
+import concurrent.futures
+import functools
 import json
 import os
 import sys
@@ -797,6 +799,14 @@ async def list_tools() -> list[types.Tool]:
 
 # ── Tool dispatch ─────────────────────────────────────────────────────────────
 
+# Thread pool for running sync tool handlers without blocking the asyncio event loop.
+# max_workers=4: MCP is stdio so concurrency is low, but allows parallel slow tools.
+_tool_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="willow-tool"
+)
+_TOOL_TIMEOUT = float(os.environ.get("WILLOW_TOOL_TIMEOUT", "45"))
+
+
 def _qualifies_as_flag(record: dict, deviation: float) -> bool:
     return (
         record.get("type") in ("failure-log",) or
@@ -808,6 +818,29 @@ def _qualifies_as_flag(record: dict, deviation: float) -> bool:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_tool_executor, functools.partial(_call_tool_sync, name, arguments)),
+            timeout=_TOOL_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        print(
+            f"[willow] TIMEOUT tool={name} app={arguments.get('app_id','')} limit={_TOOL_TIMEOUT}s",
+            file=sys.stderr, flush=True,
+        )
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "timeout",
+            "tool": name,
+            "timeout_s": _TOOL_TIMEOUT,
+            "message": f"Tool exceeded {_TOOL_TIMEOUT}s — Postgres may be slow. Check willow_status.",
+        }))]
+    except Exception as _outer_err:
+        print(f"[willow] UNHANDLED tool={name}: {_outer_err}", file=sys.stderr, flush=True)
+        return [types.TextContent(type="text", text=json.dumps({"error": str(_outer_err), "tool": name}))]
+
+
+def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
     try:
         app_id = arguments.get("app_id", "")
         if _GLEIPNIR:
