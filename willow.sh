@@ -401,6 +401,49 @@ print(f'  Notification queued for {count} known node(s)')
 " 2>/dev/null || echo "  (Grove notify skipped — store unavailable)"
         ;;
 
+    grove)
+        _grove_sub="${2:-}"
+        case "${_grove_sub}" in
+            add)
+                _addr="${3:-}"
+                _pubkey="${4:-}"
+                if [[ -z "${_addr}" || -z "${_pubkey}" ]]; then
+                    echo "Usage: willow.sh grove add <user@host:port> <public_key_hex>"
+                    exit 1
+                fi
+                echo "Willow Grove — adding contact: ${_addr}"
+                "${WILLOW_PYTHON}" -c "
+import sys
+sys.path.insert(0, '${WILLOW_ROOT}')
+try:
+    from pathlib import Path
+    from u2u.contacts import ContactStore
+    store = ContactStore(Path.home() / '.willow' / 'grove_contacts.json')
+    name = '${_addr}'.split('@')[0]
+    contact = store.add('${_addr}', '${_pubkey}', name=name)
+    print(f'  Added: {contact.name} ({contact.addr})')
+    print(f'  Public key: {contact.public_key_hex[:16]}...')
+    print()
+    print('  Next: ask them to run: willow.sh grove knock ${_addr}')
+except ImportError:
+    print('  Grove u2u module not yet available — arriving in Phase 3.')
+    print(f'  Contact saved to pending list for import later.')
+    import json, datetime
+    from pathlib import Path
+    pending = Path.home() / '.willow' / 'grove_contacts_pending.json'
+    contacts = json.loads(pending.read_text()) if pending.exists() else []
+    contacts.append({'addr': '${_addr}', 'pubkey': '${_pubkey}', 'added_at': datetime.datetime.now().isoformat()})
+    pending.write_text(json.dumps(contacts, indent=2))
+    print(f'  Saved to {pending}')
+"
+                ;;
+            *)
+                echo "Usage: willow.sh grove [add <addr> <pubkey>]"
+                exit 1
+                ;;
+        esac
+        ;;
+
     *)
         echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>]"
         exit 1
