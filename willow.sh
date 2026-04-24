@@ -363,6 +363,44 @@ else:
         "${BASH_SOURCE[0]}" start-all
         ;;
 
+    check-updates)
+        echo "Willow 1.9 — checking for updates"
+        CURRENT=$(grep -r '' "${HOME}/.willow/version" 2>/dev/null || echo "unknown")
+        LATEST=$(curl -sf --max-time 10 \
+            "https://api.github.com/repos/rudi193-cmd/willow-1.9/releases/latest" \
+            2>/dev/null | "${WILLOW_PYTHON}" -c \
+            "import json,sys; d=json.load(sys.stdin); print(d.get('tag_name','unknown'))" \
+            2>/dev/null || echo "unknown")
+
+        if [[ "${LATEST}" == "unknown" ]]; then
+            echo "  Could not reach GitHub — skipping"
+            exit 0
+        fi
+
+        if [[ "${CURRENT}" == "${LATEST}" ]]; then
+            echo "  Already up to date (${CURRENT})"
+            exit 0
+        fi
+
+        echo "  Update available: ${CURRENT} → ${LATEST}"
+
+        "${WILLOW_PYTHON}" -c "
+import sys, json
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.willow_store import WillowStore
+store = WillowStore()
+nodes = store.list('grove/nodes')
+count = len(nodes)
+store.put('grove/pending_alerts', 'update_available', {
+    'type': 'update_available',
+    'current': '${CURRENT}',
+    'latest': '${LATEST}',
+    'created_at': __import__('datetime').datetime.now().isoformat(),
+})
+print(f'  Notification queued for {count} known node(s)')
+" 2>/dev/null || echo "  (Grove notify skipped — store unavailable)"
+        ;;
+
     *)
         echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>]"
         exit 1
