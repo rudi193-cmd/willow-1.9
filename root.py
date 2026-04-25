@@ -193,13 +193,18 @@ def step_6_socket(skip_socket: bool = False) -> None:
             print("  Grove MCP: systemd not available (skip)")
 
 
-def step_7_cmb(skip_pg: bool = False) -> None:
+def step_7_cmb(skip_pg: bool = False, termux: bool = False) -> None:
     """Write CMB atom — first session anchor, never composted."""
     if skip_pg:
         return
     import datetime
-    pgb = _load_pg_bridge()
-    bridge = pgb.PgBridge()
+    if termux:
+        # Use SQLite bridge on mobile — Postgres may not be running yet
+        from core.sqlite_bridge import SqliteBridge
+        bridge = SqliteBridge()
+    else:
+        pgb = _load_pg_bridge()
+        bridge = pgb.PgBridge()
     bridge.cmb_put("cmb_origin", {
         "event": "system_birth",
         "version": VERSION,
@@ -210,12 +215,16 @@ def step_7_cmb(skip_pg: bool = False) -> None:
     print("  CMB atom: written (never composted)")
 
 
-def step_10_kb_seed(skip_pg: bool = False) -> None:
+def step_10_kb_seed(skip_pg: bool = False, termux: bool = False) -> None:
     """Seed KB with neutral starter atoms — skills, commands, architecture."""
-    if skip_pg:
+    if skip_pg and not termux:
         return
-    pgb = _load_pg_bridge()
-    bridge = pgb.PgBridge()
+    if termux:
+        from core.sqlite_bridge import SqliteBridge
+        bridge = SqliteBridge()
+    else:
+        pgb = _load_pg_bridge()
+        bridge = pgb.PgBridge()
     from core.seed_kb import seed_kb
     count = seed_kb(bridge, skip_existing=True)
     print(f"  KB seed: {count} atoms written")
@@ -423,8 +432,8 @@ def sleipnir(
         ("Vault",            lambda: step_4_vault()),
         ("Postgres schema",  lambda: (step_termux_pg() or step_5_schema(skip_pg)) if termux else step_5_schema(skip_pg)),
         ("Metabolic socket", lambda: step_termux_process_manager() if termux else step_6_socket(skip_socket)),
-        ("CMB atom",         lambda: step_7_cmb(skip_pg)),
-        ("KB seed",          lambda: step_10_kb_seed(skip_pg)),
+        ("CMB atom",         lambda: step_7_cmb(skip_pg, termux=termux)),
+        ("KB seed",          lambda: step_10_kb_seed(skip_pg, termux=termux)),
         ("Version pin",      lambda: step_8_version_pin()),
         ("PATH — willow",    lambda: step_9_path()),
         ("Grove identity",   lambda: step_grove_identity()),
