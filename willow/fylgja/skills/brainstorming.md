@@ -7,16 +7,10 @@ description: Structured brainstorm before any plan or implementation — Willow 
 
 Use BEFORE entering plan mode or starting any implementation.
 
-## Pre-load
-
-```
-ToolSearch query: "select:mcp__willow__willow_knowledge_search,mcp__willow__store_search"
-```
-
 ## Steps
 
-1. **Search existing KB** — call `mcp__willow__willow_knowledge_search` with the feature/problem as the query. Read relevant atoms before forming opinions.
-2. **Search prior session context** — call `mcp__willow__store_search` on `hanuman/atoms` with relevant keywords. Check if this problem was approached before.
+1. **Search existing KB** — call `willow_knowledge_search` with the feature/problem as the query. Read relevant atoms before forming opinions.
+2. **Search prior session context** — call `store_search` on `hanuman/atoms` with relevant keywords. Check if this problem was approached before.
 3. **State the problem** — one sentence. What are we actually solving?
 4. **Generate 3 approaches** — for each: name it, state the core tradeoff in one sentence.
 5. **Recommend one** — which and why in 2 sentences.

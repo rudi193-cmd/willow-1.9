@@ -9,7 +9,7 @@ Use when Sean says "approve [name] for today" or "sign off on [name]'s session".
 
 ## Sequence
 
-1. **Identify user** — extract name from Sean's message. Look up in `willow/users/` via `mcp__willow__store_search`.
+1. **Identify user** — extract name from Sean's message. Look up in `willow/users/` via `store_search`.
 2. **Check role** — load user profile. If role is `adult`, no guardian authorization needed — inform Sean.
 3. **For CHILD/TEEN users — present authorization checklist**:
    ```
@@ -25,7 +25,7 @@ Use when Sean says "approve [name] for today" or "sign off on [name]'s session".
 
    Type "approved" to confirm, or specify which streams.
    ```
-4. **On confirmation** — write to store via `mcp__willow__store_put`:
+4. **On confirmation** — write to store via `store_put`:
    ```json
    {
      "collection": "willow/guardian_approvals",

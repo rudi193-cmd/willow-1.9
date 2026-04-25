@@ -26,7 +26,7 @@ Use when something non-obvious was discovered: a workaround, a subtle invariant,
    Content: full explanation, constraint, or workaround
    ```
 
-3. **Ingest the file path** — call `mcp__willow__willow_knowledge_ingest`:
+3. **Ingest the file path** — call `willow_knowledge_ingest`:
    ```json
    {
      "app_id": "hanuman",

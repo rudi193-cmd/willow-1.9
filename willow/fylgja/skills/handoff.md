@@ -7,7 +7,7 @@ description: Write a Willow 1.9 session handoff — 17 questions, rebuild DB, wr
 
 ## Sequence
 
-1. **Load current state** — call `mcp__willow__willow_handoff_latest` to see prior open threads.
+1. **Load current state** — call `willow_handoff_latest` to see prior open threads.
 2. **Draft handoff** using this format:
 
 ```
@@ -29,7 +29,7 @@ Q17: "What is the next single bite?"
 ```
 
 3. **Write the file** to `~/Ashokoa/agents/hanuman/index/haumana_handoffs/SESSION_HANDOFF_<YYYYMMDD>_hanuman_<letter>.md`.
-4. **Rebuild DB** — call `mcp__willow__willow_handoff_rebuild`.
+4. **Rebuild DB** — call `willow_handoff_rebuild`.
 5. **Confirm** — report filename and Q17.
 
 ## Rules

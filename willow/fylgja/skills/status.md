@@ -7,12 +7,8 @@ description: Willow 1.9 system status — Postgres, Ollama, local store, open fl
 
 ## Sequence
 
-1. **Pre-load tools**:
-   ```
-   ToolSearch query: "select:mcp__willow__willow_status,mcp__willow__willow_system_status,mcp__willow__store_list"
-   ```
-2. **Run in parallel**: `mcp__willow__willow_status` AND `mcp__willow__willow_system_status` AND `mcp__willow__store_list` (collection `hanuman/flags`).
-3. **Report** in this format:
+1. **Run in parallel**: `willow_status` AND `willow_system_status` AND `store_list` (collection `hanuman/flags`).
+2. **Report** in this format:
    ```
    SUBSYSTEMS
      Postgres:    up / down / degraded

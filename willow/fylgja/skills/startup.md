@@ -5,18 +5,12 @@ description: Willow 1.9 session boot — health check, handoff load, flag scan, 
 
 # /startup — Willow 1.9 Boot
 
-## Tool Pre-load
-
-```
-ToolSearch query: "select:mcp__willow__willow_status,mcp__willow__willow_handoff_latest,mcp__willow__store_list"
-```
-
 ## Sequence
 
-1+2. **Health + handoff in parallel** — call `mcp__willow__willow_status` AND `mcp__willow__willow_handoff_latest` simultaneously. If Postgres fails, surface and stop.
-3. **Read prior handoff** — if content is a file pointer, use Read tool.
-4. **Check open flags** — call `mcp__willow__store_list` with collection `hanuman/flags`. Filter `flag_state: open`. Note count and top 3 by severity.
-5. **Write anchor cache** — Write tool to `~/.willow/session_anchor.json`:
+1+2. **Health + handoff in parallel** — call `willow_status` AND `willow_handoff_latest` simultaneously. If Postgres fails, surface and stop.
+3. **Read prior handoff** — if content is a file pointer, read the file at that path.
+4. **Check open flags** — call `store_list` with collection `hanuman/flags`. Filter `flag_state: open`. Note count and top 3 by severity.
+5. **Write anchor cache** — write to `~/.willow/session_anchor.json`:
    ```json
    {
      "written_at": "<ISO timestamp>",
