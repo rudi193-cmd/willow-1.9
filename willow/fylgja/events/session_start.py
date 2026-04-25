@@ -205,7 +205,7 @@ def _run_silent_startup() -> dict:
     anchor_file = anchor_dir / "session_anchor.json"
     state_file = anchor_dir / "anchor_state.json"
 
-    result = {"handoff_title": "", "handoff_summary": "", "open_flags": 0, "top_flags": [], "postgres": "unknown"}
+    result = {"handoff_title": "", "handoff_summary": "", "open_flags": 0, "top_flags": [], "postgres": "unknown", "loaded_skills": []}
 
     # Get latest handoff
     try:
@@ -242,6 +242,20 @@ def _run_silent_startup() -> dict:
             "topic": "session",
         }, timeout=5)
         fork_id = fork_result.get("fork_id", "") if isinstance(fork_result, dict) else ""
+    except Exception:
+        pass
+
+    # Auto-load relevant skills
+    loaded_skills = []
+    try:
+        anchor_topic = result.get("handoff_summary", "")[:100]
+        skill_context = f"session started {anchor_topic}"
+        skill_result = call("willow_skill_load", {
+            "app_id": AGENT,
+            "context": skill_context,
+        }, timeout=5)
+        loaded_skills = skill_result.get("skills", []) if isinstance(skill_result, dict) else []
+        result["loaded_skills"] = loaded_skills
     except Exception:
         pass
 
@@ -303,6 +317,9 @@ def main():
         lines.append(startup["handoff_summary"])
     if startup["postgres"] == "unknown":
         lines.append("BOOT DEGRADED — invoke /startup before responding to anything.")
+    if startup.get("loaded_skills"):
+        skill_names = ", ".join(s["name"] for s in startup["loaded_skills"])
+        lines.append(f"SKILLS LOADED: {skill_names}")
 
     print(json.dumps({
         "hookSpecificOutput": {

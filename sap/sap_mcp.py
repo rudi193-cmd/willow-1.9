@@ -102,6 +102,7 @@ except ImportError:
 
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
+from willow.skills import skill_put, skill_load, skill_list
 
 # ── Postgres bridge ───────────────────────────────────────────────────────────
 try:
@@ -501,6 +502,48 @@ async def list_tools() -> list[types.Tool]:
                 "status": {"type": "string", "enum": ["open", "merged", "deleted"]},
                 "app_id": {"type": "string"},
             }, "required": ["app_id"]},
+        ),
+        # ── Skills Registry ───────────────────────────────────────────────────
+        types.Tool(
+            name="willow_skill_put",
+            description="Store or update a Willow skill in the registry.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name":           {"type": "string"},
+                    "domain":         {"type": "string", "enum": ["session", "task", "fork", "grove", "system"]},
+                    "content":        {"type": "string", "description": "Skill content (markdown behavioral spec)"},
+                    "trigger":        {"type": "string", "description": "Space-separated context words that activate this skill"},
+                    "auto_load":      {"type": "boolean", "default": True},
+                    "model_agnostic": {"type": "boolean", "default": True},
+                    "app_id":         {"type": "string"},
+                },
+                "required": ["name", "domain", "content", "trigger", "app_id"],
+            },
+        ),
+        types.Tool(
+            name="willow_skill_load",
+            description="Load relevant skills for the current context. Returns up to 3 auto-loadable skills.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "context": {"type": "string", "description": "Current session context — fork topic, task domain, etc."},
+                    "app_id":  {"type": "string"},
+                },
+                "required": ["context", "app_id"],
+            },
+        ),
+        types.Tool(
+            name="willow_skill_list",
+            description="List all skills in the registry, optionally filtered by domain.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string", "enum": ["session", "task", "fork", "grove", "system"]},
+                    "app_id": {"type": "string"},
+                },
+                "required": ["app_id"],
+            },
         ),
         types.Tool(
             name="willow_route",
@@ -1391,6 +1434,29 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                 result = [{"fork_id":r[0],"title":r[1],"created_at":str(r[2]),
                     "created_by":r[3],"topic":r[4],
                     "participant_count":r[5],"change_count":r[6]} for r in cur.fetchall()]
+
+        elif name == "willow_skill_put":
+            _store = WillowStore()
+            skill_id = skill_put(
+                _store,
+                name=arguments["name"],
+                domain=arguments["domain"],
+                content=arguments["content"],
+                trigger=arguments["trigger"],
+                auto_load=arguments.get("auto_load", True),
+                model_agnostic=arguments.get("model_agnostic", True),
+            )
+            result = {"skill_id": skill_id}
+
+        elif name == "willow_skill_load":
+            _store = WillowStore()
+            skills = skill_load(_store, context=arguments["context"])
+            result = {"skills": skills}
+
+        elif name == "willow_skill_list":
+            _store = WillowStore()
+            skills = skill_list(_store, domain=arguments.get("domain"))
+            result = {"skills": skills}
 
         elif name == "willow_route":
             _msg = arguments.get("message", "")
