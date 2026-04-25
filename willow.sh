@@ -401,6 +401,17 @@ print(f'  Notification queued for {count} known node(s)')
 " 2>/dev/null || echo "  (Grove notify skipped — store unavailable)"
         ;;
 
+    logs)
+        _n="${2:-50}"
+        _log=$(ls -t "${HOME}/.willow/logs/"*.log 2>/dev/null | head -1)
+        if [[ -z "${_log}" ]]; then
+            echo "No logs found in ~/.willow/logs/"
+        else
+            echo "=== ${_log} (last ${_n} lines) ==="
+            tail -n "${_n}" "${_log}"
+        fi
+        ;;
+
     serve)
         _port="${2:-7777}"
         echo "Willow Grove — command server on 0.0.0.0:${_port}"

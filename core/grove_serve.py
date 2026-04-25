@@ -36,6 +36,7 @@ TOKEN_PATH   = Path.home() / ".willow" / "grove_token"
 
 # Commands the serve endpoint will run. Allowlist — nothing else executes.
 ALLOWED_COMMANDS = {
+    "logs",
     "status",
     "status-all",
     "health",
