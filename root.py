@@ -436,7 +436,13 @@ def sleipnir(
         fn()
         print("done")
 
-    if no_chain:
+    if no_chain or termux:
+        print()
+        if termux:
+            print("  Willow installed. Next steps:")
+            print("    willow-termux start        — start Postgres + Ollama")
+            print("    willow.sh status-all       — check everything is up")
+            print("    python3 dashboard2.py      — launch Grove dashboard")
         return
     print()
     shoot = WILLOW_ROOT / "shoot.py"
