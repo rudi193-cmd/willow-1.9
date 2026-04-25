@@ -48,21 +48,30 @@ def step_1_dirs() -> None:
 
 
 def step_2_deps() -> None:
-    """Install Python dependencies from requirements.txt."""
+    """Install Python dependencies from requirements.txt, streaming progress."""
     req = WILLOW_ROOT / "requirements.txt"
     if not req.exists():
         return
+
+    pkgs = [l.strip() for l in req.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    total = len(pkgs)
+    print(f"\n  Installing {total} packages...\n")
+
+    def _run(extra_flags: list) -> None:
+        for i, pkg in enumerate(pkgs, 1):
+            print(f"  [{i}/{total}] {pkg}", flush=True)
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", pkg, "--quiet"] + extra_flags,
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                # Surface the error but keep going — one bad package shouldn't abort all
+                print(f"    WARNING: {pkg} failed — {result.stderr.strip()[:120]}")
+
     try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", str(req), "-q"],
-            check=True,
-        )
-    except subprocess.CalledProcessError:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", str(req), "-q",
-             "--break-system-packages"],
-            check=True,
-        )
+        _run([])
+    except Exception:
+        _run(["--break-system-packages"])
 
 
 def step_3_gpg() -> str:
