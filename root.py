@@ -348,9 +348,10 @@ def main():
     parser.add_argument("--skip-pg", action="store_true")
     parser.add_argument("--skip-socket", action="store_true")
     parser.add_argument("--skip-gpg", action="store_true")
+    parser.add_argument("--no-chain", action="store_true")
     args = parser.parse_args()
     sleipnir(skip_pg=args.skip_pg, skip_socket=args.skip_socket,
-             skip_gpg=args.skip_gpg)
+             skip_gpg=args.skip_gpg, no_chain=args.no_chain)
 
 
 if __name__ == "__main__":
