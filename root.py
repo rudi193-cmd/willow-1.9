@@ -458,6 +458,9 @@ def sleipnir(
             print("  │                                                     │")
             print("  │   Docs:  github.com/rudi193-cmd/willow-1.9         │")
             print("  │                                                     │")
+            print("  │   👋  Hello LLM Physics Discord —                   │")
+            print("  │       running Willow on a phone. Yes, really.       │")
+            print("  │                                                     │")
             print("  └─────────────────────────────────────────────────────┘")
             print()
         return
