@@ -223,14 +223,19 @@ def step_8_version_pin() -> None:
 
 
 def step_9_path() -> None:
-    """Symlink willow.sh into ~/.local/bin/willow so it's on PATH."""
-    src = WILLOW_ROOT / "willow.sh"
-    dst = Path.home() / ".local" / "bin" / "willow"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.is_symlink() or dst.exists():
-        dst.unlink()
-    dst.symlink_to(src)
-    dst.chmod(0o755)
+    """Symlink willow.sh and willow-termux.sh into ~/.local/bin/."""
+    bin_dir = Path.home() / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    for src_name, dst_name in [("willow.sh", "willow"), ("willow-termux.sh", "willow-termux")]:
+        src = WILLOW_ROOT / src_name
+        if not src.exists():
+            continue
+        dst = bin_dir / dst_name
+        if dst.is_symlink() or dst.exists():
+            dst.unlink()
+        dst.symlink_to(src)
+        dst.chmod(0o755)
 
     # Ensure ~/.local/bin is on PATH in shell profiles
     export_line = '\nexport PATH="$HOME/.local/bin:$PATH"\n'
