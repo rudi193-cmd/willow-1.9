@@ -230,6 +230,72 @@ def step_9_path() -> None:
                     f.write(export_line)
 
 
+def _is_wsl() -> bool:
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except Exception:
+        return False
+
+
+def _windows_username() -> str | None:
+    try:
+        mnt_c_users = Path("/mnt/c/Users")
+        if not mnt_c_users.exists():
+            return None
+        users = [d.name for d in mnt_c_users.iterdir()
+                 if d.is_dir() and d.name not in ("Public", "Default", "All Users")]
+        return users[0] if len(users) == 1 else None
+    except Exception:
+        return None
+
+
+def step_wsl_launcher() -> bool:
+    """Write launch-willow.bat to Windows Desktop if running in WSL."""
+    if not _is_wsl():
+        return False
+    win_user = _windows_username()
+    if not win_user:
+        print("  WSL detected but could not find Windows username — skipping launcher")
+        return False
+    desktop = Path(f"/mnt/c/Users/{win_user}/Desktop")
+    if not desktop.exists():
+        print(f"  Desktop not found at {desktop} — skipping launcher")
+        return False
+    bat = desktop / "Launch Willow.bat"
+    linux_user = os.environ.get("USER", "")
+    bat_content = f"""@echo off
+title Willow
+wsl.exe bash -l -c "
+  pg_isready -q 2>/dev/null || sudo service postgresql start 2>/dev/null
+  cd /home/{linux_user}/github/willow-dashboard
+  ./willow-dashboard.sh
+"
+pause
+"""
+    bat.write_text(bat_content)
+    print(f"  Created: {bat}")
+    print(f"  Double-click 'Launch Willow.bat' on your Windows Desktop to start.")
+    return True
+
+
+def step_grove_identity() -> Path:
+    """Generate Grove Ed25519 identity key at ~/.willow/identity.key if not present."""
+    key_path = Path.home() / ".willow" / "identity.key"
+    if key_path.exists():
+        print(f"  Grove identity already exists at {key_path}")
+        return key_path
+    sys.path.insert(0, str(WILLOW_ROOT))
+    try:
+        from u2u.identity import Identity
+        ident = Identity.generate(key_path)
+        print(f"  Grove identity created: {key_path}")
+        print(f"  Public key: {ident.public_key_hex[:32]}...")
+        print(f"  Share your public key with trusted contacts to connect via Grove.")
+    except ImportError:
+        print("  Grove u2u module not yet available — arriving in Phase 3. Skipping.")
+    return key_path
+
+
 def sleipnir(
     skip_pg: bool = False,
     skip_socket: bool = False,
@@ -254,6 +320,8 @@ def sleipnir(
         ("CMB atom",         lambda: step_7_cmb(skip_pg)),
         ("Version pin",      lambda: step_8_version_pin()),
         ("PATH — willow",    lambda: step_9_path()),
+        ("Grove identity",   lambda: step_grove_identity()),
+        ("WSL launcher",     lambda: step_wsl_launcher()),
     ]
 
     for label, fn in steps:
@@ -280,9 +348,10 @@ def main():
     parser.add_argument("--skip-pg", action="store_true")
     parser.add_argument("--skip-socket", action="store_true")
     parser.add_argument("--skip-gpg", action="store_true")
+    parser.add_argument("--no-chain", action="store_true")
     args = parser.parse_args()
     sleipnir(skip_pg=args.skip_pg, skip_socket=args.skip_socket,
-             skip_gpg=args.skip_gpg)
+             skip_gpg=args.skip_gpg, no_chain=args.no_chain)
 
 
 if __name__ == "__main__":

@@ -283,8 +283,169 @@ print('  The Einherjar grow stronger.')
         [[ $fail -eq 0 ]]
         ;;
 
+    start-all)
+        echo "Willow 1.9 — starting all services"
+        _services=(grove-mcp journal-watcher journal-responder willow-dashboard willow-metabolic corpus-watcher)
+        for svc in "${_services[@]}"; do
+            if systemctl --user is-active --quiet "${svc}.service" 2>/dev/null; then
+                echo "  [✓] ${svc} already running"
+            else
+                systemctl --user start "${svc}.service" 2>/dev/null \
+                    && echo "  [↑] ${svc} started" \
+                    || echo "  [✗] ${svc} failed to start"
+            fi
+        done
+        echo ""
+        echo "  Note: sap_mcp.py is spawned by Claude Code only — not managed here."
+        ;;
+
+    stop-all)
+        echo "Willow 1.9 — stopping all services"
+        _services=(willow-dashboard grove-mcp journal-watcher journal-responder willow-metabolic corpus-watcher)
+        for svc in "${_services[@]}"; do
+            systemctl --user stop "${svc}.service" 2>/dev/null \
+                && echo "  [↓] ${svc} stopped" \
+                || echo "  [–] ${svc} was not running"
+        done
+        ;;
+
+    status-all)
+        echo "Willow 1.9 — system status"
+        echo ""
+
+        # Postgres
+        "${WILLOW_PYTHON}" -c "
+import sys, os
+sys.path.insert(0, '${WILLOW_ROOT}')
+os.environ['WILLOW_PG_DB'] = '${WILLOW_PG_DB}'
+from core.pg_bridge import try_connect
+pg = try_connect()
+if pg:
+    cur = pg.cursor()
+    cur.execute('SELECT COUNT(*) FROM knowledge')
+    count = cur.fetchone()[0]
+    print(f'  [\033[32m✓\033[0m] postgres          up ({count} KB atoms)')
+    pg.close()
+else:
+    print('  [\033[31m✗\033[0m] postgres          NOT CONNECTED')
+" 2>/dev/null || echo "  [✗] postgres          error"
+
+        # Ollama
+        curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 \
+            && echo "  [✓] ollama            up" \
+            || echo "  [✗] ollama            unreachable"
+
+        # Systemd user services
+        _services=(grove-mcp journal-watcher journal-responder willow-dashboard willow-metabolic corpus-watcher)
+        for svc in "${_services[@]}"; do
+            if systemctl --user is-active --quiet "${svc}.service" 2>/dev/null; then
+                printf "  [\033[32m✓\033[0m] %-18s running\n" "${svc}"
+            elif systemctl --user is-enabled --quiet "${svc}.service" 2>/dev/null; then
+                printf "  [\033[31m✗\033[0m] %-18s dead (enabled)\n" "${svc}"
+            else
+                printf "  [\033[33m–\033[0m] %-18s disabled\n" "${svc}"
+            fi
+        done
+
+        # MCP server
+        if pgrep -f "sap_mcp.py" > /dev/null 2>&1; then
+            echo "  [✓] sap_mcp.py        running (Claude Code session)"
+        else
+            echo "  [–] sap_mcp.py        not running (start via Claude Code)"
+        fi
+
+        echo ""
+        ;;
+
+    restart)
+        "${BASH_SOURCE[0]}" stop-all
+        sleep 2
+        "${BASH_SOURCE[0]}" start-all
+        ;;
+
+    check-updates)
+        echo "Willow 1.9 — checking for updates"
+        CURRENT=$(grep -r '' "${HOME}/.willow/version" 2>/dev/null || echo "unknown")
+        LATEST=$(curl -sf --max-time 10 \
+            "https://api.github.com/repos/rudi193-cmd/willow-1.9/releases/latest" \
+            2>/dev/null | "${WILLOW_PYTHON}" -c \
+            "import json,sys; d=json.load(sys.stdin); print(d.get('tag_name','unknown'))" \
+            2>/dev/null || echo "unknown")
+
+        if [[ "${LATEST}" == "unknown" ]]; then
+            echo "  Could not reach GitHub — skipping"
+            exit 0
+        fi
+
+        if [[ "${CURRENT}" == "${LATEST}" ]]; then
+            echo "  Already up to date (${CURRENT})"
+            exit 0
+        fi
+
+        echo "  Update available: ${CURRENT} → ${LATEST}"
+
+        "${WILLOW_PYTHON}" -c "
+import sys, json
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.willow_store import WillowStore
+store = WillowStore()
+nodes = store.list('grove/nodes')
+count = len(nodes)
+store.put('grove/pending_alerts', 'update_available', {
+    'type': 'update_available',
+    'current': '${CURRENT}',
+    'latest': '${LATEST}',
+    'created_at': __import__('datetime').datetime.now().isoformat(),
+})
+print(f'  Notification queued for {count} known node(s)')
+" 2>/dev/null || echo "  (Grove notify skipped — store unavailable)"
+        ;;
+
+    grove)
+        _grove_sub="${2:-}"
+        case "${_grove_sub}" in
+            add)
+                _addr="${3:-}"
+                _pubkey="${4:-}"
+                if [[ -z "${_addr}" || -z "${_pubkey}" ]]; then
+                    echo "Usage: willow.sh grove add <user@host:port> <public_key_hex>"
+                    exit 1
+                fi
+                echo "Willow Grove — adding contact: ${_addr}"
+                "${WILLOW_PYTHON}" -c "
+import sys
+sys.path.insert(0, '${WILLOW_ROOT}')
+try:
+    from pathlib import Path
+    from u2u.contacts import ContactStore
+    store = ContactStore(Path.home() / '.willow' / 'grove_contacts.json')
+    name = '${_addr}'.split('@')[0]
+    contact = store.add('${_addr}', '${_pubkey}', name=name)
+    print(f'  Added: {contact.name} ({contact.addr})')
+    print(f'  Public key: {contact.public_key_hex[:16]}...')
+    print()
+    print('  Next: ask them to run: willow.sh grove knock ${_addr}')
+except ImportError:
+    print('  Grove u2u module not yet available — arriving in Phase 3.')
+    print(f'  Contact saved to pending list for import later.')
+    import json, datetime
+    from pathlib import Path
+    pending = Path.home() / '.willow' / 'grove_contacts_pending.json'
+    contacts = json.loads(pending.read_text()) if pending.exists() else []
+    contacts.append({'addr': '${_addr}', 'pubkey': '${_pubkey}', 'added_at': datetime.datetime.now().isoformat()})
+    pending.write_text(json.dumps(contacts, indent=2))
+    print(f'  Saved to {pending}')
+"
+                ;;
+            *)
+                echo "Usage: willow.sh grove [add <addr> <pubkey>]"
+                exit 1
+                ;;
+        esac
+        ;;
+
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>]"
         exit 1
         ;;
 esac
