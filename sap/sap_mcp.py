@@ -102,7 +102,6 @@ except ImportError:
 
 # ── WillowStore ───────────────────────────────────────────────────────────────
 from willow_store import WillowStore
-from willow.skills import skill_put, skill_load, skill_list
 
 # ── Postgres bridge ───────────────────────────────────────────────────────────
 try:
@@ -1436,6 +1435,7 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                     "participant_count":r[5],"change_count":r[6]} for r in cur.fetchall()]
 
         elif name == "willow_skill_put":
+            from willow.skills import skill_put
             _store = WillowStore()
             skill_id = skill_put(
                 _store,
@@ -1449,11 +1449,13 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             result = {"skill_id": skill_id}
 
         elif name == "willow_skill_load":
+            from willow.skills import skill_load
             _store = WillowStore()
             skills = skill_load(_store, context=arguments["context"])
             result = {"skills": skills}
 
         elif name == "willow_skill_list":
+            from willow.skills import skill_list
             _store = WillowStore()
             skills = skill_list(_store, domain=arguments.get("domain"))
             result = {"skills": skills}
