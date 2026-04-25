@@ -407,7 +407,7 @@ print(f'  Notification queued for {count} known node(s)')
         echo "  Token: ${HOME}/.willow/grove_token"
         echo "  Share the token with trusted nodes: willow grove pair"
         echo ""
-        WILLOW_ROOT="${WILLOW_ROOT}" "${WILLOW_PYTHON}" -m core.grove_serve --port "${_port}"
+        cd "${WILLOW_ROOT}" && WILLOW_ROOT="${WILLOW_ROOT}" "${WILLOW_PYTHON}" -m core.grove_serve --port "${_port}"
         ;;
 
     grove)
