@@ -14,7 +14,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.pg_bridge import PgBridge
 
-HANDOFF_DIR = Path.home() / "Ashokoa/agents/heimdallr/index/haumana_handoffs"
+_CANDIDATES = [
+    Path.home() / "Ashokoa/agents/heimdallr/index/haumana_handoffs",
+    Path.home() / "Desktop",
+    Path.home() / "agents/heimdallr/index",
+]
+HANDOFF_DIR = next((p for p in _CANDIDATES if p.exists()), Path.home() / "Desktop")
 TARGET_DATES = ["20260420", "20260421", "20260422"]
 
 
