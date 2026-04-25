@@ -444,8 +444,44 @@ except ImportError:
         esac
         ;;
 
+    health)
+        _tier="${2:-boot}"
+        echo "Willow 1.9 — system health (${_tier})"
+        WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" \
+            "${WILLOW_ROOT}/willow/fylgja/skills/scripts/system_health.py" \
+            --check "${_tier}" \
+            --willow-dir "${HOME}/.willow" \
+            --repo "${WILLOW_ROOT}" \
+            "${@:3}"
+        ;;
+
+    memory-health)
+        _dir="${2:-${HOME}/.claude/projects/-home-sean-campbell-github-willow-1-9/memory}"
+        echo "Willow 1.9 — memory health (${_dir})"
+        "${WILLOW_PYTHON}" \
+            "${WILLOW_ROOT}/willow/fylgja/skills/scripts/memory_health.py" \
+            --dir "${_dir}" \
+            "${@:3}"
+        ;;
+
+    sentinel)
+        bash "${WILLOW_ROOT}/willow/fylgja/skills/scripts/check_context.sh"
+        ;;
+
+    guard)
+        _input="${2:-}"
+        if [[ -z "${_input}" ]]; then
+            echo "Usage: willow.sh guard <text|--file path> [--wrap] [--json]"
+            exit 1
+        fi
+        shift
+        "${WILLOW_PYTHON}" \
+            "${WILLOW_ROOT}/willow/fylgja/skills/scripts/guard.py" \
+            "$@"
+        ;;
+
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>|health [boot|daily|weekly]|memory-health [dir]|sentinel|guard <text|--file path>]"
         exit 1
         ;;
 esac
