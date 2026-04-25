@@ -57,21 +57,17 @@ def step_2_deps() -> None:
     total = len(pkgs)
     print(f"\n  Installing {total} packages...\n")
 
-    def _run(extra_flags: list) -> None:
-        for i, pkg in enumerate(pkgs, 1):
-            print(f"  [{i}/{total}] {pkg}", flush=True)
+    for i, pkg in enumerate(pkgs, 1):
+        print(f"  [{i}/{total}] {pkg}", flush=True)
+        for flags in [[], ["--break-system-packages"]]:
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", pkg, "--quiet"] + extra_flags,
+                [sys.executable, "-m", "pip", "install", pkg, "--quiet"] + flags,
                 capture_output=True, text=True,
             )
-            if result.returncode != 0:
-                # Surface the error but keep going — one bad package shouldn't abort all
-                print(f"    WARNING: {pkg} failed — {result.stderr.strip()[:120]}")
-
-    try:
-        _run([])
-    except Exception:
-        _run(["--break-system-packages"])
+            if result.returncode == 0:
+                break
+        else:
+            print(f"    WARNING: {pkg} failed — {result.stderr.strip()[:120]}")
 
 
 def step_3_gpg() -> str:
