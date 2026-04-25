@@ -205,6 +205,17 @@ def step_7_cmb(skip_pg: bool = False) -> None:
     print("  CMB atom: written (never composted)")
 
 
+def step_10_kb_seed(skip_pg: bool = False) -> None:
+    """Seed KB with neutral starter atoms — skills, commands, architecture."""
+    if skip_pg:
+        return
+    pgb = _load_pg_bridge()
+    bridge = pgb.PgBridge()
+    from core.seed_kb import seed_kb
+    count = seed_kb(bridge, skip_existing=True)
+    print(f"  KB seed: {count} atoms written")
+
+
 def step_8_version_pin() -> None:
     """Write ~/.willow/version — Sleipnir won't re-run after this."""
     version_path = Path.home() / ".willow" / "version"
@@ -318,6 +329,7 @@ def sleipnir(
         ("Postgres schema",  lambda: step_5_schema(skip_pg)),
         ("Metabolic socket", lambda: step_6_socket(skip_socket)),
         ("CMB atom",         lambda: step_7_cmb(skip_pg)),
+        ("KB seed",          lambda: step_10_kb_seed(skip_pg)),
         ("Version pin",      lambda: step_8_version_pin()),
         ("PATH — willow",    lambda: step_9_path()),
         ("Grove identity",   lambda: step_grove_identity()),

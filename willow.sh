@@ -444,44 +444,92 @@ except ImportError:
         esac
         ;;
 
-    health)
-        _tier="${2:-boot}"
-        echo "Willow 1.9 — system health (${_tier})"
-        WILLOW_PG_DB="${WILLOW_PG_DB}" "${WILLOW_PYTHON}" \
-            "${WILLOW_ROOT}/willow/fylgja/skills/scripts/system_health.py" \
-            --check "${_tier}" \
-            --willow-dir "${HOME}/.willow" \
-            --repo "${WILLOW_ROOT}" \
-            "${@:3}"
+    litellm-start)
+        echo "Willow 1.9 — starting LiteLLM gateway"
+        CONFIG_FILE="${HOME}/.willow/litellm_config.yaml"
+        "${WILLOW_PYTHON}" -c "
+import sys, yaml, json
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.willow_store import WillowStore
+from core.providers import build_litellm_config
+store = WillowStore()
+config = build_litellm_config(store)
+with open('${CONFIG_FILE}', 'w') as f:
+    yaml.dump(config, f)
+print('  Config written to ${CONFIG_FILE}')
+"
+        litellm --config "${CONFIG_FILE}" --port 4000 &
+        echo "  LiteLLM gateway running at http://localhost:4000"
+        echo "  PID: $!"
+        echo $! > "${HOME}/.willow/litellm.pid"
         ;;
 
-    memory-health)
-        _dir="${2:-${HOME}/.claude/projects/-home-sean-campbell-github-willow-1-9/memory}"
-        echo "Willow 1.9 — memory health (${_dir})"
-        "${WILLOW_PYTHON}" \
-            "${WILLOW_ROOT}/willow/fylgja/skills/scripts/memory_health.py" \
-            --dir "${_dir}" \
-            "${@:3}"
-        ;;
-
-    sentinel)
-        bash "${WILLOW_ROOT}/willow/fylgja/skills/scripts/check_context.sh"
-        ;;
-
-    guard)
-        _input="${2:-}"
-        if [[ -z "${_input}" ]]; then
-            echo "Usage: willow.sh guard <text|--file path> [--wrap] [--json]"
-            exit 1
+    litellm-stop)
+        PID_FILE="${HOME}/.willow/litellm.pid"
+        if [[ -f "${PID_FILE}" ]]; then
+            kill "$(cat "${PID_FILE}")" 2>/dev/null && echo "  LiteLLM stopped" || echo "  Already stopped"
+            rm -f "${PID_FILE}"
+        else
+            pkill -f "litellm --config" 2>/dev/null && echo "  LiteLLM stopped" || echo "  Not running"
         fi
-        shift
-        "${WILLOW_PYTHON}" \
-            "${WILLOW_ROOT}/willow/fylgja/skills/scripts/guard.py" \
-            "$@"
+        ;;
+
+    providers)
+        _sub="${2:-list}"
+        case "${_sub}" in
+            list)
+                "${WILLOW_PYTHON}" -c "
+import sys
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.willow_store import WillowStore
+from core.providers import get_providers, _mask_key
+store = WillowStore()
+providers = get_providers(store)
+print('  Providers:')
+for p in providers:
+    status = '✓ ON ' if p['enabled'] else '✗ OFF'
+    local = ' (local)' if p.get('local') else ''
+    key_info = ''
+    if not p.get('local') and p.get('api_key'):
+        key_info = f' key={_mask_key(p[\"api_key\"])}'
+    print(f'    [{status}] {p[\"name\"]}{local}{key_info}')
+"
+                ;;
+            enable)
+                PROVIDER="${3:-}"
+                API_KEY="${4:-}"
+                [[ -z "${PROVIDER}" ]] && echo "Usage: willow.sh providers enable <name> [api_key]" && exit 1
+                "${WILLOW_PYTHON}" -c "
+import sys
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.willow_store import WillowStore
+from core.providers import enable_provider
+store = WillowStore()
+enable_provider(store, '${PROVIDER}', api_key='${API_KEY}' or None)
+print(f'  Enabled: ${PROVIDER}')
+"
+                ;;
+            disable)
+                PROVIDER="${3:-}"
+                [[ -z "${PROVIDER}" ]] && echo "Usage: willow.sh providers disable <name>" && exit 1
+                "${WILLOW_PYTHON}" -c "
+import sys
+sys.path.insert(0, '${WILLOW_ROOT}')
+from core.willow_store import WillowStore
+from core.providers import disable_provider
+store = WillowStore()
+disable_provider(store, '${PROVIDER}')
+print(f'  Disabled: ${PROVIDER}')
+"
+                ;;
+            *)
+                echo "Usage: willow.sh providers [list|enable <name> [key]|disable <name>]"
+                ;;
+        esac
         ;;
 
     *)
-        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>|health [boot|daily|weekly]|memory-health [dir]|sentinel|guard <text|--file path>]"
+        echo "Usage: willow.sh [start|status|metabolic|update|export|purge <project>|backup|restore <path>|nuke|ledger [project]|valhalla|verify|start-all|stop-all|status-all|restart|check-updates|grove add <addr> <pubkey>|litellm-start|litellm-stop|providers [list|enable <name> [key]|disable <name>]]"
         exit 1
         ;;
 esac
