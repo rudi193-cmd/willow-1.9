@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-WILLOW_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WILLOW_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 export WILLOW_ROOT
 SAP_MCP="${WILLOW_ROOT}/sap/sap_mcp.py"
 
@@ -407,7 +407,7 @@ print(f'  Notification queued for {count} known node(s)')
         echo "  Token: ${HOME}/.willow/grove_token"
         echo "  Share the token with trusted nodes: willow grove pair"
         echo ""
-        cd "${WILLOW_ROOT}" && WILLOW_ROOT="${WILLOW_ROOT}" "${WILLOW_PYTHON}" -m core.grove_serve --port "${_port}"
+        PYTHONPATH="${WILLOW_ROOT}:${PYTHONPATH:-}" WILLOW_ROOT="${WILLOW_ROOT}" "${WILLOW_PYTHON}" "${WILLOW_ROOT}/core/grove_serve.py" --port "${_port}"
         ;;
 
     grove)

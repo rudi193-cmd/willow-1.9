@@ -23,6 +23,11 @@ import sys
 import threading
 from pathlib import Path
 
+# Ensure willow-1.9 root is on path when invoked via -m
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DEFAULT_PORT = int(os.environ.get("WILLOW_GROVE_PORT", "7777"))
