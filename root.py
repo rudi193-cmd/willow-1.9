@@ -307,15 +307,100 @@ def step_grove_identity() -> Path:
     return key_path
 
 
+def _is_termux() -> bool:
+    """Detect Termux environment."""
+    return (
+        "com.termux" in os.environ.get("PREFIX", "")
+        or Path("/data/data/com.termux").exists()
+        or "termux" in os.environ.get("TERMUX_VERSION", "").lower()
+    )
+
+
+def step_termux_pg() -> None:
+    """Print Termux-specific Postgres setup instructions if not already running."""
+    try:
+        import psycopg2
+        psycopg2.connect(
+            dbname="postgres",
+            user=os.environ.get("USER", ""),
+        ).close()
+        return  # already running
+    except Exception:
+        pass
+    print()
+    print("  ┌─ Termux Postgres setup ───────────────────────────────┐")
+    print("  │  Run these once, then re-run root.py:                 │")
+    print("  │    pkg install postgresql                              │")
+    print("  │    initdb $PREFIX/var/lib/postgresql                  │")
+    print("  │    pg_ctl -D $PREFIX/var/lib/postgresql start         │")
+    print("  │    createdb willow_19                                  │")
+    print("  └───────────────────────────────────────────────────────┘")
+    print()
+
+
+def step_termux_process_manager() -> None:
+    """Write a simple start/stop shell script as systemd substitute."""
+    script = WILLOW_ROOT / "willow-termux.sh"
+    content = """\
+#!/usr/bin/env bash
+# willow-termux.sh — Termux service manager (systemd substitute)
+# Run in a Termux session; use tmux or multiple tabs for background services.
+
+WILLOW_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cmd="${1:-help}"
+
+case "$cmd" in
+    start)
+        echo "Starting Willow services..."
+        # Postgres
+        pg_ctl -D "$PREFIX/var/lib/postgresql" status > /dev/null 2>&1 \\
+            || pg_ctl -D "$PREFIX/var/lib/postgresql" start -l ~/.willow/logs/postgres.log
+        echo "  [✓] postgres"
+        # Ollama (if installed)
+        if command -v ollama > /dev/null 2>&1; then
+            pgrep -f "ollama serve" > /dev/null || (ollama serve > ~/.willow/logs/ollama.log 2>&1 &)
+            echo "  [✓] ollama"
+        else
+            echo "  [–] ollama not installed (optional)"
+        fi
+        echo "  Done. Run: python3 ${WILLOW_ROOT}/willow.sh to start the MCP server."
+        ;;
+    stop)
+        pg_ctl -D "$PREFIX/var/lib/postgresql" stop 2>/dev/null && echo "  [↓] postgres" || true
+        pkill -f "ollama serve" 2>/dev/null && echo "  [↓] ollama" || true
+        ;;
+    status)
+        pg_ctl -D "$PREFIX/var/lib/postgresql" status 2>/dev/null || echo "  postgres: stopped"
+        pgrep -f "ollama serve" > /dev/null && echo "  ollama:   running" || echo "  ollama:   stopped"
+        ;;
+    *)
+        echo "Usage: willow-termux.sh [start|stop|status]"
+        ;;
+esac
+"""
+    script.write_text(content)
+    script.chmod(0o755)
+    print(f"  Written: {script}")
+    print("  Use willow-termux.sh start/stop/status instead of systemctl")
+
+
 def sleipnir(
     skip_pg: bool = False,
     skip_socket: bool = False,
     skip_gpg: bool = False,
     no_chain: bool = False,
+    termux: bool = False,
 ) -> None:
-    """Run all 8 steps. Idempotent."""
+    """Run all install steps. Idempotent."""
+    if termux or _is_termux():
+        termux = True
+        skip_socket = True
+        skip_gpg = True
+
     print()
     print(f"  Willow {VERSION} — Sleipnir running")
+    if termux:
+        print("  Mode: Termux (Android)")
     print(f"  System: {WILLOW_ROOT}")
     print(f"  User data: ~/.willow/  (yours — delete it and you're gone)")
     print()
@@ -326,14 +411,14 @@ def sleipnir(
         ("Dependencies",     lambda: step_2_deps()),
         ("GPG key",          lambda: (None if skip_gpg else step_3_gpg())),
         ("Vault",            lambda: step_4_vault()),
-        ("Postgres schema",  lambda: step_5_schema(skip_pg)),
-        ("Metabolic socket", lambda: step_6_socket(skip_socket)),
+        ("Postgres schema",  lambda: (step_termux_pg() or step_5_schema(skip_pg)) if termux else step_5_schema(skip_pg)),
+        ("Metabolic socket", lambda: step_termux_process_manager() if termux else step_6_socket(skip_socket)),
         ("CMB atom",         lambda: step_7_cmb(skip_pg)),
         ("KB seed",          lambda: step_10_kb_seed(skip_pg)),
         ("Version pin",      lambda: step_8_version_pin()),
         ("PATH — willow",    lambda: step_9_path()),
         ("Grove identity",   lambda: step_grove_identity()),
-        ("WSL launcher",     lambda: step_wsl_launcher()),
+        ("WSL launcher",     lambda: (None if termux else step_wsl_launcher())),
     ]
 
     for label, fn in steps:
@@ -361,9 +446,11 @@ def main():
     parser.add_argument("--skip-socket", action="store_true")
     parser.add_argument("--skip-gpg", action="store_true")
     parser.add_argument("--no-chain", action="store_true")
+    parser.add_argument("--termux", action="store_true",
+                        help="Termux/Android mode: skip systemd, GPG, WSL; write willow-termux.sh")
     args = parser.parse_args()
     sleipnir(skip_pg=args.skip_pg, skip_socket=args.skip_socket,
-             skip_gpg=args.skip_gpg, no_chain=args.no_chain)
+             skip_gpg=args.skip_gpg, no_chain=args.no_chain, termux=args.termux)
 
 
 if __name__ == "__main__":
