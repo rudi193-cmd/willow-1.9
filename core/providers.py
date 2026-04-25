@@ -2,10 +2,20 @@
 """
 providers.py — Willow provider registry. b17: PROV1 ΔΣ=42
 
-Local-first: Ollama is always on. Cloud keys are user-controlled addons.
-Provider state persists in ~/.willow/store/willow/providers/ collection.
+Local-first: Ollama is the default provider when available. Cloud keys are
+user-controlled addons. Provider state persists in the SOIL store.
+Ollama being enabled means the user *wants* it — not that it's installed.
 """
+import urllib.request
 from typing import Optional
+
+
+def _ollama_reachable(base_url: str = "http://localhost:11434") -> bool:
+    try:
+        urllib.request.urlopen(f"{base_url}/api/tags", timeout=2)
+        return True
+    except Exception:
+        return False
 
 _COLLECTION = "willow/providers"
 
@@ -120,6 +130,8 @@ def build_litellm_config(store) -> dict:
 
         if name == "ollama":
             base_url = p.get("base_url", "http://localhost:11434")
+            if not _ollama_reachable(base_url):
+                continue  # Ollama enabled but not running — skip, don't error
             for model in models:
                 model_list.append({
                     "model_name": model,
