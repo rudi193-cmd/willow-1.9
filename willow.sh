@@ -401,9 +401,52 @@ print(f'  Notification queued for {count} known node(s)')
 " 2>/dev/null || echo "  (Grove notify skipped — store unavailable)"
         ;;
 
+    serve)
+        _port="${2:-7777}"
+        echo "Willow Grove — command server on 0.0.0.0:${_port}"
+        echo "  Token: ${HOME}/.willow/grove_token"
+        echo "  Share the token with trusted nodes: willow grove pair"
+        echo ""
+        WILLOW_ROOT="${WILLOW_ROOT}" "${WILLOW_PYTHON}" -m core.grove_serve --port "${_port}"
+        ;;
+
     grove)
         _grove_sub="${2:-}"
         case "${_grove_sub}" in
+            pair)
+                TOKEN_FILE="${HOME}/.willow/grove_token"
+                if [[ ! -f "${TOKEN_FILE}" ]]; then
+                    # Generate token by starting server briefly
+                    "${WILLOW_PYTHON}" -c "
+import sys, secrets
+from pathlib import Path
+tp = Path.home() / '.willow' / 'grove_token'
+tp.parent.mkdir(parents=True, exist_ok=True)
+token = secrets.token_hex(32)
+tp.write_text(token + '\n')
+tp.chmod(0o600)
+print(token)
+" 2>/dev/null
+                fi
+                echo ""
+                echo "  Grove token (share with trusted nodes):"
+                echo ""
+                echo "  $(grep -v '^$' "${TOKEN_FILE}" | head -1)"
+                echo ""
+                echo "  On the other node, save it with:"
+                echo "    echo <token> > ~/.willow/grove_token && chmod 600 ~/.willow/grove_token"
+                echo ""
+                ;;
+            send)
+                _host="${3:-}"
+                _cmd="${4:-}"
+                if [[ -z "${_host}" || -z "${_cmd}" ]]; then
+                    echo "Usage: willow.sh grove send <host:port> <command>"
+                    echo "  e.g. willow.sh grove send 192.168.1.5:7777 status-all"
+                    exit 1
+                fi
+                "${WILLOW_PYTHON}" -m core.grove_client "${_host}" "${_cmd}"
+                ;;
             add)
                 _addr="${3:-}"
                 _pubkey="${4:-}"
