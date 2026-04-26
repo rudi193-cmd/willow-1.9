@@ -36,6 +36,8 @@ def _target_from_input(tool_name: str, tool_input: dict) -> str:
         return f"{tool_input.get('from_id','')}→{tool_input.get('to_id','')}"
     if tool_name == "mcp__willow__willow_knowledge_ingest":
         return tool_input.get("title", "")[:80]
+    if tool_name == "mcp__willow__willow_knowledge_at":
+        return tool_input.get("at_time", tool_input.get("query", ""))[:80]
     return ""
 
 
@@ -76,10 +78,12 @@ def _record_rate(key: str) -> None:
                 data = json.loads(_RATE_FILE.read_text())
             except Exception:
                 pass
-        data[key] = time.time()
         now = time.time()
+        data[key] = now
         data = {k: v for k, v in data.items() if now - v < _RATE_WINDOW * 2}
-        _RATE_FILE.write_text(json.dumps(data))
+        tmp = _RATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data))
+        tmp.rename(_RATE_FILE)  # atomic on Linux
     except Exception:
         pass
 

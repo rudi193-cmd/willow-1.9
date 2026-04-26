@@ -2,6 +2,7 @@ import json
 import sys
 from io import StringIO
 from unittest.mock import patch
+import pytest
 
 
 def _run(stdin_data: dict) -> str:
@@ -80,5 +81,7 @@ def test_store_put_failure_does_not_crash(tmp_path):
         raise RuntimeError("MCP unavailable")
     with patch("willow.fylgja.events.post_tool.call", fake_call), \
          patch("willow.fylgja.events.post_tool._RATE_FILE", rate_file):
-        _run({"tool_name": "Edit", "tool_input": {"file_path": "/foo/bar.py"}})
-    assert True  # no exception = pass
+        try:
+            _run({"tool_name": "Edit", "tool_input": {"file_path": "/foo/bar.py"}})
+        except Exception as exc:
+            pytest.fail(f"Hook raised an exception: {exc}")
