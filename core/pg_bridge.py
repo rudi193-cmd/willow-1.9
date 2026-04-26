@@ -485,6 +485,46 @@ class PgBridge:
             """, (atom_id,))
         self.conn.commit()
 
+    def promote(self, atom_id: str) -> None:
+        """Increment visit_count and recalculate weight with log formula + recency decay.
+        weight = 1.0 + log(1 + visit_count) * recency_factor
+        recency_factor = 1.0 if last_visited < 7 days ago, decays linearly to 0.1 at 180 days.
+        """
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE knowledge
+                SET visit_count  = visit_count + 1,
+                    last_visited = now(),
+                    weight       = 1.0 + ln(1.0 + visit_count + 1) *
+                        GREATEST(0.1,
+                            1.0 - (0.9 / 173.0) *
+                            LEAST(173, EXTRACT(EPOCH FROM (now() - COALESCE(last_visited, now()))) / 86400.0)
+                        )
+                WHERE id = %s
+            """, (atom_id,))
+        self.conn.commit()
+
+    def demote(self, atom_id: str) -> None:
+        """Recalculate weight applying recency decay without incrementing visit_count.
+        Called by scheduled passes (norn, draugr) for atoms not accessed recently.
+        Atoms decayed below 0.3 are candidates for serendipity surfacing or archiving.
+        """
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE knowledge
+                SET weight = GREATEST(0.1,
+                    1.0 + ln(1.0 + visit_count) *
+                    GREATEST(0.1,
+                        1.0 - (0.9 / 173.0) *
+                        LEAST(173, EXTRACT(EPOCH FROM (now() - COALESCE(last_visited, now() - INTERVAL '180 days'))) / 86400.0)
+                    )
+                )
+                WHERE id = %s
+            """, (atom_id,))
+        self.conn.commit()
+
     def knowledge_put(self, record: dict) -> str:
         self._ensure_conn()
         with self.conn.cursor() as cur:

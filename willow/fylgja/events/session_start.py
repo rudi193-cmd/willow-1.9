@@ -198,34 +198,96 @@ def _ensure_grove_mcp() -> str:
 def _run_silent_startup() -> dict:
     """
     Silent startup — runs before the first prompt regardless of what the user says.
-    Returns a dict with handoff summary, open flags, and postgres state.
-    Writes session_anchor.json and resets anchor_state.json.
+    Derives context from store queries (traces, gaps, promoted atoms) rather than
+    the handoff narrative. Returns structured dict; writes session_anchor.json.
     """
     anchor_dir = Path.home() / ".willow"
     anchor_file = anchor_dir / "session_anchor.json"
     state_file = anchor_dir / "anchor_state.json"
 
-    result = {"handoff_title": "", "handoff_summary": "", "open_flags": 0, "top_flags": [], "postgres": "unknown", "loaded_skills": []}
+    result = {
+        "handoff_title": "",
+        "handoff_summary": "",
+        "open_flags": 0,
+        "top_flags": [],
+        "postgres": "unknown",
+        "loaded_skills": [],
+        "recent_traces": [],
+        "open_gaps": [],
+        "promoted_atoms": [],
+        "next_bite": "",
+    }
 
-    # Get latest handoff
+    # 1. Latest handoff — timestamp boundary only (not narrative)
+    handoff_date = ""
     try:
         h = call("willow_handoff_latest", {"app_id": AGENT}, timeout=8)
         result["handoff_title"] = h.get("filename", "")
-        summary = h.get("summary", "")
-        result["handoff_summary"] = summary[:120] if summary else ""
+        handoff_date = h.get("session_date", h.get("created", ""))
     except Exception:
         pass
 
-    # Check open flags
+    # 2. Trace atoms since last handoff
     try:
-        flags = call("store_list", {"app_id": AGENT, "collection": "hanuman/flags"}, timeout=5)
-        open_flags = [f for f in (flags or []) if f.get("flag_state") == "open"]
-        result["open_flags"] = len(open_flags)
-        result["top_flags"] = [f.get("title", "")[:60] for f in open_flags[:3]]
+        params: dict = {"app_id": AGENT, "collection": "hanuman/turns/store"}
+        if handoff_date:
+            params["filter"] = {"timestamp_gt": handoff_date}
+        traces = call("store_search", params, timeout=5)
+        result["recent_traces"] = (traces or [])[:10]
     except Exception:
         pass
 
-    # Postgres state from already-run willow_status
+    # 3. Open gaps sorted by severity
+    try:
+        gaps = call("store_list", {"app_id": AGENT, "collection": "hanuman/gaps/store"}, timeout=5)
+        open_gaps = sorted(
+            [g for g in (gaps or []) if g.get("status") == "open"],
+            key=lambda g: g.get("severity", 0),
+            reverse=True,
+        )
+        result["open_gaps"] = open_gaps[:5]
+        result["open_flags"] = len(open_gaps)
+        result["top_flags"] = [g.get("title", "")[:60] for g in open_gaps[:3]]
+    except Exception:
+        try:
+            flags = call("store_list", {"app_id": AGENT, "collection": "hanuman/flags"}, timeout=5)
+            open_flags = [f for f in (flags or []) if f.get("flag_state") == "open"]
+            result["open_flags"] = len(open_flags)
+            result["top_flags"] = [f.get("title", "")[:60] for f in open_flags[:3]]
+        except Exception:
+            pass
+
+    # 4. Promoted atoms (weight > 1.5 = frequently accessed historical context)
+    try:
+        promoted = call("willow_knowledge_search", {
+            "app_id": AGENT,
+            "query": "weight:>1.5",
+            "limit": 5,
+        }, timeout=5)
+        result["promoted_atoms"] = (promoted or [])[:5]
+    except Exception:
+        pass
+
+    # 5. Next bite from latest session composite
+    try:
+        sessions = call("store_search", {
+            "app_id": AGENT,
+            "collection": "hanuman/sessions/store",
+            "filter": {"type": "session"},
+        }, timeout=5)
+        if sessions:
+            latest = sorted(sessions, key=lambda s: s.get("date", ""), reverse=True)[0]
+            result["next_bite"] = latest.get("next_bite", "")
+    except Exception:
+        pass
+
+    # Derive handoff_summary from store data (not from handoff .md file)
+    if result["next_bite"]:
+        result["handoff_summary"] = result["next_bite"][:200]
+    elif result["top_flags"]:
+        result["handoff_summary"] = "Open: " + "; ".join(result["top_flags"])
+
+    # Postgres state
     try:
         s = call("willow_status", {"app_id": AGENT}, timeout=5)
         result["postgres"] = "up" if isinstance(s.get("postgres"), dict) else "unknown"
@@ -245,14 +307,13 @@ def _run_silent_startup() -> dict:
     except Exception:
         pass
 
-    # Auto-load relevant skills
+    # Auto-load relevant skills (seeded from next_bite or top gap)
     loaded_skills = []
     try:
-        anchor_topic = result.get("handoff_summary", "")[:100]
-        skill_context = f"session started {anchor_topic}"
+        skill_context = result["next_bite"] or result["handoff_summary"] or "session started"
         skill_result = call("willow_skill_load", {
             "app_id": AGENT,
-            "context": skill_context,
+            "context": skill_context[:100],
         }, timeout=5)
         loaded_skills = skill_result.get("skills", []) if isinstance(skill_result, dict) else []
         result["loaded_skills"] = loaded_skills
@@ -271,6 +332,8 @@ def _run_silent_startup() -> dict:
             "open_flags": result["open_flags"],
             "top_flags": result["top_flags"],
             "fork_id": fork_id,
+            "trace_count": len(result["recent_traces"]),
+            "promoted_count": len(result["promoted_atoms"]),
         }, indent=2))
         state_file.write_text(json.dumps({"prompt_count": 0}))
     except Exception:
@@ -305,15 +368,34 @@ def main():
         lines.append(f"  ⚠ {a}")
 
     # Anchor context — always injected
-    lines.append(f"[ANCHOR]")
+    lines.append("[ANCHOR]")
     _fork_line = f"agent={AGENT}  postgres={startup['postgres']}"
     if startup.get("fork_id"):
         _fork_line += f"  fork={startup['fork_id']}"
     lines.append(_fork_line)
     if startup["handoff_title"]:
         lines.append(f"last handoff: {startup['handoff_title']}")
-    lines.append(f"open flags: {startup['open_flags']}")
-    if startup["handoff_summary"]:
+    # Recent traces (what happened since last handoff)
+    traces = startup.get("recent_traces", [])
+    if traces:
+        trace_summaries = [t.get("summary", t.get("tool", "?"))[:60] for t in traces[:5]]
+        lines.append(f"recent traces ({len(traces)}): " + " · ".join(trace_summaries))
+    # Open gaps
+    if startup["open_flags"]:
+        lines.append(f"open gaps: {startup['open_flags']}")
+        for flag in startup["top_flags"]:
+            lines.append(f"  · {flag}")
+    else:
+        lines.append("open gaps: 0")
+    # Promoted atoms (historical context worth surfacing)
+    promoted = startup.get("promoted_atoms", [])
+    if promoted:
+        promoted_titles = [a.get("title", a.get("id", "?"))[:50] for a in promoted[:3]]
+        lines.append(f"promoted atoms: " + " · ".join(promoted_titles))
+    # Next bite directive (from session composite, beats handoff narrative)
+    if startup.get("next_bite"):
+        lines.append(f"NEXT: {startup['next_bite']}")
+    elif startup["handoff_summary"]:
         lines.append(startup["handoff_summary"])
     if startup["postgres"] == "unknown":
         lines.append("BOOT DEGRADED — invoke /startup before responding to anything.")

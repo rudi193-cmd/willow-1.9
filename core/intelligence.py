@@ -108,6 +108,12 @@ def serendipity_pass(bridge, recent_days: int = 7,
                     seen.add(d["id"])
                     surfaced.append(d)
 
+    for atom in surfaced[:5]:
+        try:
+            bridge.promote(atom["id"])
+        except Exception:
+            pass
+
     return surfaced[:5]
 
 
@@ -158,6 +164,11 @@ def dark_matter_pass(bridge, min_overlap: int = 3, limit: int = 100) -> int:
                         "overlap": sorted(overlap),
                     },
                 })
+                try:
+                    bridge.promote(a["id"])
+                    bridge.promote(b["id"])
+                except Exception:
+                    pass
                 written += 1
                 if written >= 20:
                     return written
