@@ -1,4 +1,5 @@
 import json
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 from willow.fylgja.events.stop import (
@@ -44,9 +45,6 @@ def test_mark_session_clean_skips_on_zero_turns(tmp_path):
             mock_get.return_value = {"clean_session_count": 3}
             mark_session_clean(turn_count=0)
             assert not mock_save.called
-
-
-from io import StringIO
 
 
 def _run_stop(stdin_data: dict) -> None:

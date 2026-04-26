@@ -48,6 +48,8 @@ def mark_session_clean(turn_count: int = 0) -> None:
 
 def _write_session_composite(session_id: str) -> None:
     """Write session composite atom. Fast — no LLM, pure store_put."""
+    if call is None:
+        return
     try:
         sid = (session_id or "unknown")[:8]
         record = {
