@@ -158,20 +158,22 @@ def openclaw_inbound_poll(
         return {"messages": [], "error": None, "sessions_file": str(sessions_file)}
 
     try:
-        sessions_data = json.loads(sessions_file.read_text(encoding="utf-8"))
+        # sessions.json is keyed by session_key: {"agent:main:main": {"sessionId": "...", "sessionFile": "...", ...}}
+        sessions_map = json.loads(sessions_file.read_text(encoding="utf-8"))
     except Exception as e:
         return {"messages": [], "error": f"sessions.json unreadable: {e}"}
 
-    sessions = sessions_data.get("sessions", [])
     messages = []
 
-    for session in sessions:
+    for session_key, session in sessions_map.items():
         session_id = session.get("sessionId", "")
-        session_key = session.get("key", "")
-        if not session_id:
+        transcript_path = session.get("sessionFile", "")
+        if not transcript_path:
+            transcript_path = str(sessions_dir / f"{session_id}.jsonl") if session_id else ""
+        if not transcript_path:
             continue
 
-        transcript = sessions_dir / f"{session_id}.jsonl"
+        transcript = Path(transcript_path)
         if not transcript.exists():
             continue
 
