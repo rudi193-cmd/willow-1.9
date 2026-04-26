@@ -5,69 +5,270 @@ b17: SOIL1  ΔΣ=42
 
 WILLOW_STORE_ROOT defaults to ~/.willow/store/ — never inside the repo.
 Each collection is a SQLite database at {root}/{collection}.db.
+
+Security: path sanitization, symlink blocking, 100KB size limit, threading lock.
+Rubric: Angular Deviation Rubric v3.0 governs write classification.
+Audit: every write is logged to audit_log within each collection DB.
+Soft delete: deleted records are invisible to read/search but preserved in audit trail.
 """
 import json
+import math
 import os
+import re
 import sqlite3
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 _DEFAULT_STORE_ROOT = Path.home() / ".willow" / "store"
 
+MAX_RECORD_BYTES = 100_000  # 100KB per record
+
+
+# ── Angular Deviation Rubric v3.0 ──────────────────────────────────────────────
+
+PI4 = math.pi / 4   # 45°
+PI2 = math.pi / 2   # 90°
+PI  = math.pi        # 180° — absolute ceiling
+
+class Rubric:
+    """Angular deviation rubric with user-configurable thresholds.
+
+    quiet_below: deviations smaller than this are silent (default π/4)
+    flag_below:  deviations between quiet and flag are logged (default π/2)
+    Above flag_below → stop (requires human ratification).
+    """
+    def __init__(self, quiet_below: float = math.pi / 4,
+                 flag_below: float = math.pi / 2,
+                 hard_stops: set | None = None):
+        if quiet_below > flag_below:
+            raise ValueError("quiet_below must be <= flag_below")
+        if flag_below > PI:
+            raise ValueError(f"flag_below cannot exceed π ({PI:.4f})")
+        self.quiet_below = quiet_below
+        self.flag_below = flag_below
+        self.hard_stops = hard_stops or set()
+
+    def action(self, deviation: float) -> str:
+        mag = abs(deviation)
+        for hs in self.hard_stops:
+            if mag >= hs:
+                return "stop"
+        if mag < self.quiet_below:
+            return "work_quiet"
+        elif mag < self.flag_below:
+            return "flag"
+        return "stop"
+
+    @classmethod
+    def default(cls) -> "Rubric":
+        return cls()
+
+    @classmethod
+    def verbose(cls) -> "Rubric":
+        return cls(quiet_below=math.pi / 8, flag_below=math.pi / 4)
+
+    @classmethod
+    def quiet(cls) -> "Rubric":
+        return cls(quiet_below=math.pi / 2, flag_below=3 * math.pi / 4)
+
+
+DEFAULT_RUBRIC = Rubric.default()
+
+
+def angular_action(deviation: float, rubric: Rubric = None) -> str:
+    return (rubric or DEFAULT_RUBRIC).action(deviation)
+
+
+def net_trajectory(deviations: list[float], rubric: Rubric = None) -> tuple[float, str]:
+    if not deviations:
+        return 0.0, "stable"
+    r = rubric or DEFAULT_RUBRIC
+    total = 0.0
+    for d in deviations:
+        mag = abs(d)
+        w = 1.0 if mag >= r.flag_below else (0.5 if mag >= r.quiet_below else 0.25)
+        total += d * w
+    avg = total / len(deviations)
+    if avg > r.quiet_below:
+        return avg, "improving"
+    elif avg < -r.quiet_below:
+        return avg, "degrading"
+    return avg, "stable"
+
+
+# ── Path Security ──────────────────────────────────────────────────────────────
+
+_SAFE_COLLECTION = re.compile(r'^[a-zA-Z0-9_/\-]+$')
+
+
+def _sanitize_collection(name: str) -> str:
+    """Normalize collection name. Block traversal and disallowed characters."""
+    clean = "".join(c for c in name if c.isalnum() or c in "/_-")
+    while "//" in clean:
+        clean = clean.replace("//", "/")
+    clean = clean.strip("/")
+    parts = [p for p in clean.split("/") if p and p != ".."]
+    return "/".join(parts)
+
+
+def _sanitize_id(record_id: str) -> str:
+    """Record IDs: alphanumeric, underscore, hyphen only. No slashes."""
+    return "".join(c for c in str(record_id) if c.isalnum() or c in "_-")
+
+
+# ── Schema migration helpers ───────────────────────────────────────────────────
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    """Add new columns to existing records tables. Idempotent."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(records)").fetchall()}
+    migrations = [
+        ("deleted",    "INTEGER DEFAULT 0"),
+        ("deviation",  "REAL DEFAULT 0.0"),
+        ("action",     "TEXT DEFAULT 'work_quiet'"),
+        ("updated_at", "TEXT"),
+    ]
+    for col, typedef in migrations:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE records ADD COLUMN {col} {typedef}")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_id  TEXT NOT NULL,
+            operation  TEXT NOT NULL,
+            deviation  REAL,
+            action     TEXT,
+            timestamp  TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+
+
+# ── WillowStore ────────────────────────────────────────────────────────────────
 
 class WillowStore:
-    def __init__(self, root: Optional[str] = None):
+    def __init__(self, root: Optional[str] = None, rubric: Rubric = None):
         env_root = os.environ.get("WILLOW_STORE_ROOT")
-        self.root = Path(root or env_root or _DEFAULT_STORE_ROOT)
+        self.root = Path(root or env_root or _DEFAULT_STORE_ROOT).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.rubric = rubric or DEFAULT_RUBRIC
+        self._lock = threading.Lock()
 
     def _db_path(self, collection: str) -> Path:
-        parts = collection.split("/")
+        clean = _sanitize_collection(collection)
+        if not clean:
+            raise ValueError(f"Invalid collection name: {collection!r}")
+        parts = clean.split("/")
         db_dir = self.root / Path(*parts[:-1]) if len(parts) > 1 else self.root
+        db_path = (db_dir / f"{parts[-1]}.db").resolve()
+
+        # Block path escape and symlinks
+        if not str(db_path).startswith(str(self.root)):
+            raise ValueError(f"Path escape blocked: {collection!r}")
         db_dir.mkdir(parents=True, exist_ok=True)
-        return db_dir / f"{parts[-1]}.db"
+        if db_path.exists() and db_path.is_symlink():
+            raise ValueError(f"Symlink blocked: {collection!r}")
+        return db_path
 
     def _conn(self, collection: str) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path(collection)))
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS records (
-                id      TEXT PRIMARY KEY,
-                data    TEXT NOT NULL,
-                created TEXT DEFAULT (datetime('now'))
+                id         TEXT PRIMARY KEY,
+                data       TEXT NOT NULL,
+                created    TEXT DEFAULT (datetime('now')),
+                updated_at TEXT,
+                deleted    INTEGER DEFAULT 0,
+                deviation  REAL DEFAULT 0.0,
+                action     TEXT DEFAULT 'work_quiet'
             )
         """)
-        conn.commit()
+        _ensure_columns(conn)
         return conn
 
     def _ts_cols(self, conn: sqlite3.Connection) -> list[str]:
-        """Return timestamp-like column names that need datetime('now') on insert."""
         ts_names = {"created", "created_at", "updated_at", "modified_at"}
         all_cols = conn.execute("PRAGMA table_info(records)").fetchall()
         return [row[1] for row in all_cols if row[1] in ts_names]
 
+    # ── Write ──────────────────────────────────────────────────────────────────
+
     def put(self, collection: str, record: dict, record_id: Optional[str] = None,
             deviation: float = 0.0) -> tuple:
-        rid = record_id or record.get("_id") or record.get("id") or record.get("b17")
+        raw_id = record_id or record.get("_id") or record.get("id") or record.get("b17")
+        if not raw_id:
+            raise ValueError(
+                f"record must have an 'id', '_id', or 'b17' field — got keys: {list(record.keys())}"
+            )
+        rid = _sanitize_id(str(raw_id))
         if not rid:
-            raise ValueError(f"record must have an 'id', '_id', or 'b17' field — got keys: {list(record.keys())}")
-        conn = self._conn(collection)
-        ts_cols = self._ts_cols(conn)
-        extra_cols = ", ".join(ts_cols)
-        extra_vals = ", ".join(["datetime('now')"] * len(ts_cols))
-        if ts_cols:
-            sql = f"INSERT OR REPLACE INTO records (id, data, {extra_cols}) VALUES (?, ?, {extra_vals})"
-        else:
-            sql = "INSERT OR REPLACE INTO records (id, data) VALUES (?, ?)"
-        conn.execute(sql, (rid, json.dumps(record)))
-        conn.commit()
-        conn.close()
-        return rid, "work_quiet", []
+            raise ValueError(f"Invalid record ID after sanitization: {raw_id!r}")
+
+        action = angular_action(deviation, self.rubric)
+        data = json.dumps(record, default=str)
+        if len(data) > MAX_RECORD_BYTES:
+            raise ValueError(f"Record too large: {len(data)} bytes (max {MAX_RECORD_BYTES})")
+
+        now = datetime.now().isoformat()
+        with self._lock:
+            conn = self._conn(collection)
+            conn.execute(
+                "INSERT OR REPLACE INTO records (id, data, updated_at, deviation, action) VALUES (?, ?, ?, ?, ?)",
+                (rid, data, now, deviation, action)
+            )
+            conn.execute(
+                "INSERT INTO audit_log (record_id, operation, deviation, action, timestamp) VALUES (?, 'create', ?, ?, ?)",
+                (rid, deviation, action, now)
+            )
+            conn.commit()
+            conn.close()
+        return rid, action, []
+
+    def update(self, collection: str, record_id: str, record: dict,
+               deviation: float = 0.0) -> tuple:
+        rid = _sanitize_id(str(record_id))
+        action = angular_action(deviation, self.rubric)
+        now = datetime.now().isoformat()
+
+        with self._lock:
+            conn = self._conn(collection)
+            existing = conn.execute(
+                "SELECT data FROM records WHERE id = ? AND deleted = 0", (rid,)
+            ).fetchone()
+            if existing:
+                merged = json.loads(existing["data"])
+                merged.update(record)
+                data = json.dumps(merged, default=str)
+            else:
+                data = json.dumps(record, default=str)
+
+            if len(data) > MAX_RECORD_BYTES:
+                conn.close()
+                raise ValueError(f"Record too large: {len(data)} bytes (max {MAX_RECORD_BYTES})")
+
+            conn.execute(
+                "INSERT OR REPLACE INTO records (id, data, updated_at, deviation, action) VALUES (?, ?, ?, ?, ?)",
+                (rid, data, now, deviation, action)
+            )
+            conn.execute(
+                "INSERT INTO audit_log (record_id, operation, deviation, action, timestamp) VALUES (?, 'update', ?, ?, ?)",
+                (rid, deviation, action, now)
+            )
+            conn.commit()
+            conn.close()
+        return rid, action, []
+
+    # ── Read ───────────────────────────────────────────────────────────────────
 
     def get(self, collection: str, record_id: str) -> Optional[dict]:
         conn = self._conn(collection)
         row = conn.execute(
-            "SELECT data FROM records WHERE id = ?", (record_id,)
+            "SELECT data FROM records WHERE id = ? AND deleted = 0",
+            (_sanitize_id(str(record_id)),)
         ).fetchone()
         conn.close()
         return json.loads(row["data"]) if row else None
@@ -76,16 +277,26 @@ class WillowStore:
         conn = self._conn(collection)
         ts_cols = self._ts_cols(conn)
         order = f"ORDER BY {ts_cols[0]} DESC" if ts_cols else ""
-        rows = conn.execute(f"SELECT data FROM records {order}").fetchall()
+        rows = conn.execute(
+            f"SELECT data FROM records WHERE deleted = 0 {order}"
+        ).fetchall()
         conn.close()
         return [json.loads(r["data"]) for r in rows]
+
+    def all(self, collection: str) -> list:
+        """Alias for list() — sap_mcp.py compatibility."""
+        return self.list(collection)
+
+    # ── Search ─────────────────────────────────────────────────────────────────
 
     def search(self, collection: str, query: str) -> list:
         tokens = query.lower().split()
         if not tokens:
             return self.list(collection)
         conn = self._conn(collection)
-        rows = conn.execute("SELECT data FROM records").fetchall()
+        rows = conn.execute(
+            "SELECT data FROM records WHERE deleted = 0"
+        ).fetchall()
         conn.close()
         results = []
         for row in rows:
@@ -94,57 +305,41 @@ class WillowStore:
                 results.append(json.loads(row["data"]))
         return results
 
-    def delete(self, collection: str, record_id: str) -> bool:
-        conn = self._conn(collection)
-        cur = conn.execute("DELETE FROM records WHERE id = ?", (record_id,))
-        conn.commit()
-        conn.close()
-        return cur.rowcount > 0
-
-    def collections(self) -> list:
-        result = []
-        for db_file in self.root.rglob("*.db"):
-            rel = db_file.relative_to(self.root)
-            parts = list(rel.parts)
-            parts[-1] = parts[-1].replace(".db", "")
-            result.append("/".join(parts))
-        return sorted(result)
-
     def search_all(self, query: str) -> list:
-        """Search across all collections. No deviation column — clean break."""
+        """Search across all collections."""
         results = []
         for collection in self.collections():
             results.extend(self.search(collection, query))
         return results
 
-    def stats(self) -> dict:
-        result = {}
-        for c in self.collections():
-            conn = self._conn(c)
-            row = conn.execute("SELECT COUNT(*) FROM records").fetchone()
+    # ── Delete ─────────────────────────────────────────────────────────────────
+
+    def delete(self, collection: str, record_id: str) -> bool:
+        """Soft delete — invisible to read/search but preserved in audit trail."""
+        rid = _sanitize_id(str(record_id))
+        now = datetime.now().isoformat()
+        with self._lock:
+            conn = self._conn(collection)
+            result = conn.execute(
+                "UPDATE records SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0",
+                (now, rid)
+            )
+            if result.rowcount == 0:
+                conn.close()
+                return False
+            conn.execute(
+                "INSERT INTO audit_log (record_id, operation, timestamp) VALUES (?, 'delete', ?)",
+                (rid, now)
+            )
+            conn.commit()
             conn.close()
-            result[c] = {"count": row[0] if row else 0}
-        return result
+        return True
 
-    def all(self, collection: str) -> list:
-        """Alias for list() — sap_mcp.py compatibility."""
-        return self.list(collection)
-
-    def update(self, collection: str, record_id: str, record: dict,
-               deviation: float = 0.0) -> tuple:
-        """Update a record. deviation param accepted but not stored — no such column."""
-        existing = self.get(collection, record_id)
-        if existing:
-            existing.update(record)
-            self.put(collection, existing)
-        else:
-            self.put(collection, record)
-        action = "work_quiet"
-        return record_id, action, []
+    # ── Edges ──────────────────────────────────────────────────────────────────
 
     def add_edge(self, from_id: str, to_id: str, relation: str,
                  context: str = "") -> tuple:
-        rid = f"{from_id}__{relation}__{to_id}"
+        rid = f"{_sanitize_id(from_id)}__{_sanitize_id(relation)}__{_sanitize_id(to_id)}"
         record = {
             "id": rid,
             "from_id": from_id,
@@ -156,7 +351,9 @@ class WillowStore:
 
     def edges_for(self, record_id: str) -> list:
         conn = self._conn("_graph/edges")
-        rows = conn.execute("SELECT data FROM records").fetchall()
+        rows = conn.execute(
+            "SELECT data FROM records WHERE deleted = 0"
+        ).fetchall()
         conn.close()
         results = []
         for row in rows:
@@ -164,3 +361,46 @@ class WillowStore:
             if edge.get("from_id") == record_id or edge.get("to_id") == record_id:
                 results.append(edge)
         return results
+
+    # ── Audit ──────────────────────────────────────────────────────────────────
+
+    def audit_log(self, collection: str, limit: int = 20) -> list:
+        conn = self._conn(collection)
+        rows = conn.execute(
+            "SELECT record_id, operation, deviation, action, timestamp FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        conn.close()
+        return [{"record_id": r[0], "operation": r[1], "deviation": r[2],
+                 "action": r[3], "timestamp": r[4]} for r in rows]
+
+    # ── Collections / Stats ────────────────────────────────────────────────────
+
+    def collections(self) -> list:
+        result = []
+        for db_file in self.root.rglob("*.db"):
+            rel = db_file.relative_to(self.root)
+            parts = list(rel.parts)
+            parts[-1] = parts[-1].replace(".db", "")
+            result.append("/".join(parts))
+        return sorted(result)
+
+    def stats(self) -> dict:
+        result = {}
+        for c in self.collections():
+            try:
+                conn = self._conn(c)
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM records WHERE deleted = 0"
+                ).fetchone()
+                devs = [r[0] for r in conn.execute(
+                    "SELECT deviation FROM records WHERE deleted = 0 AND deviation != 0.0"
+                ).fetchall()]
+                conn.close()
+                traj_score, traj_label = net_trajectory(devs)
+                result[c] = {"count": row[0] if row else 0,
+                             "trajectory": traj_label,
+                             "score": round(traj_score, 3)}
+            except Exception:
+                continue
+        return result
