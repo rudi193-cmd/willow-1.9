@@ -485,6 +485,64 @@ class PgBridge:
             """, (atom_id,))
         self.conn.commit()
 
+    def promote(self, atom_id: str) -> None:
+        """Increment visit_count and recalculate weight with log formula + recency decay.
+        weight = 1.0 + ln(1 + new_visit_count) * recency_factor
+        recency_factor = 1.0 for the first 7 days, then decays linearly to 0.1 at 180 days.
+        """
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                WITH base AS (
+                    SELECT
+                        visit_count + 1 AS new_vc,
+                        CASE
+                            WHEN COALESCE(last_visited, now()) >= now() - INTERVAL '7 days'
+                            THEN 1.0
+                            ELSE GREATEST(0.1,
+                                1.0 - (0.9 / 173.0) *
+                                LEAST(173, EXTRACT(EPOCH FROM (now() - last_visited)) / 86400.0 - 7)
+                            )
+                        END AS rf
+                    FROM knowledge WHERE id = %s
+                )
+                UPDATE knowledge
+                SET visit_count  = base.new_vc,
+                    last_visited = now(),
+                    weight       = 1.0 + ln(1.0 + base.new_vc) * base.rf
+                FROM base
+                WHERE knowledge.id = %s
+            """, (atom_id, atom_id))
+        self.conn.commit()
+
+    def demote(self, atom_id: str) -> None:
+        """Recalculate weight applying recency decay without incrementing visit_count.
+        Called by scheduled passes (norn, draugr) for atoms not accessed recently.
+        Atoms decayed below 0.3 are candidates for serendipity surfacing or archiving.
+        """
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                WITH base AS (
+                    SELECT
+                        visit_count AS vc,
+                        CASE
+                            WHEN COALESCE(last_visited, now() - INTERVAL '180 days') >= now() - INTERVAL '7 days'
+                            THEN 1.0
+                            ELSE GREATEST(0.1,
+                                1.0 - (0.9 / 173.0) *
+                                LEAST(173, EXTRACT(EPOCH FROM (now() - COALESCE(last_visited, now() - INTERVAL '180 days'))) / 86400.0 - 7)
+                            )
+                        END AS rf
+                    FROM knowledge WHERE id = %s
+                )
+                UPDATE knowledge
+                SET weight = GREATEST(0.1, 1.0 + ln(1.0 + base.vc) * base.rf)
+                FROM base
+                WHERE knowledge.id = %s
+            """, (atom_id, atom_id))
+        self.conn.commit()
+
     def knowledge_put(self, record: dict) -> str:
         self._ensure_conn()
         with self.conn.cursor() as cur:

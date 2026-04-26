@@ -289,9 +289,9 @@ class WillowStore:
 
     # ── Search ─────────────────────────────────────────────────────────────────
 
-    def search(self, collection: str, query: str) -> list:
+    def search(self, collection: str, query: str, after: str | None = None) -> list:
         tokens = query.lower().split()
-        if not tokens:
+        if not tokens and not after:
             return self.list(collection)
         conn = self._conn(collection)
         rows = conn.execute(
@@ -300,9 +300,16 @@ class WillowStore:
         conn.close()
         results = []
         for row in rows:
-            text = row["data"].lower()
-            if all(t in text for t in tokens):
-                results.append(json.loads(row["data"]))
+            if tokens:
+                text = row["data"].lower()
+                if not all(t in text for t in tokens):
+                    continue
+            record = json.loads(row["data"])
+            if after:
+                ts = record.get("timestamp") or record.get("date") or ""
+                if ts <= after:
+                    continue
+            results.append(record)
         return results
 
     def search_all(self, query: str) -> list:

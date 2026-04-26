@@ -214,6 +214,7 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "collection": {"type": "string", "description": "Collection path to search within, e.g. 'hanuman/atoms'"},
                     "query": {"type": "string", "description": "Search terms — multiple words are ANDed"},
+                    "after": {"type": "string", "description": "Optional ISO timestamp. Only return records whose 'timestamp' or 'date' field is strictly after this value."},
                 },
                 "required": ["collection", "query"],
             },
@@ -1017,7 +1018,11 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                 _sanitize_result(result, f"store_get:{arguments['collection']}")
 
         elif name == "store_search":
-            result = store.search(arguments["collection"], arguments["query"])
+            result = store.search(
+                arguments["collection"],
+                arguments["query"],
+                after=arguments.get("after"),
+            )
             _sanitize_result(result, f"store_search:{arguments['collection']}")
 
         elif name == "store_search_all":
@@ -1082,7 +1087,7 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                 _sanitize_result(result, "willow_knowledge_search")
                 for atom in knowledge[:3]:
                     try:
-                        pg.increment_visit(atom["id"])
+                        pg.promote(atom["id"])
                     except Exception:
                         pass
 

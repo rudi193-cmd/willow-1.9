@@ -336,6 +336,14 @@ class SqliteBridge:
             WHERE id = ?
         """, (_now(), atom_id))
 
+    def promote(self, atom_id: str) -> None:
+        """SQLite delegate — uses linear formula (SQLite lacks ln()). Interface compatibility with pg_bridge."""
+        self.increment_visit(atom_id)
+
+    def demote(self, atom_id: str) -> None:
+        """SQLite delegate — weight decay not implemented; no-op to satisfy interface."""
+        pass
+
     def knowledge_put(self, record: dict) -> str:
         atom_id = record.get("id") or self.gen_id(8)
         record = {**record, "id": atom_id}
