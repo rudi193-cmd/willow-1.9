@@ -229,9 +229,9 @@ def _run_silent_startup() -> dict:
 
     # 2. Trace atoms since last handoff
     try:
-        params: dict = {"app_id": AGENT, "collection": "hanuman/turns/store"}
+        params: dict = {"app_id": AGENT, "collection": "hanuman/turns/store", "query": ""}
         if handoff_date:
-            params["filter"] = {"timestamp_gt": handoff_date}
+            params["after"] = handoff_date
         traces = call("store_search", params, timeout=5)
         result["recent_traces"] = (traces or [])[:10]
     except Exception:
@@ -270,10 +270,9 @@ def _run_silent_startup() -> dict:
 
     # 5. Next bite from latest session composite
     try:
-        sessions = call("store_search", {
+        sessions = call("store_list", {
             "app_id": AGENT,
             "collection": "hanuman/sessions/store",
-            "filter": {"type": "session"},
         }, timeout=5)
         if sessions:
             latest = sorted(sessions, key=lambda s: s.get("date", ""), reverse=True)[0]
@@ -391,7 +390,7 @@ def main():
     promoted = startup.get("promoted_atoms", [])
     if promoted:
         promoted_titles = [a.get("title", a.get("id", "?"))[:50] for a in promoted[:3]]
-        lines.append(f"promoted atoms: " + " · ".join(promoted_titles))
+        lines.append("promoted atoms: " + " · ".join(promoted_titles))
     # Next bite directive (from session composite, beats handoff narrative)
     if startup.get("next_bite"):
         lines.append(f"NEXT: {startup['next_bite']}")
