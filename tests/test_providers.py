@@ -62,9 +62,10 @@ def test_disable_ollama_raises(store):
         disable_provider(store, "ollama")
 
 
-def test_build_litellm_config_includes_only_enabled_providers(store):
-    from core.providers import build_litellm_config, enable_provider
-    # Only ollama is enabled by default
+def test_build_litellm_config_includes_only_enabled_providers(store, monkeypatch):
+    import core.providers as prov
+    monkeypatch.setattr(prov, "_ollama_reachable", lambda *a, **kw: True)
+    from core.providers import build_litellm_config
     config = build_litellm_config(store)
     model_names = [m["model_name"] for m in config["model_list"]]
     # Ollama models should be present
@@ -84,7 +85,9 @@ def test_build_litellm_config_adds_cloud_when_enabled(store):
     assert "claude-haiku-4-5" in model_names
 
 
-def test_build_litellm_config_ollama_uses_correct_prefix(store):
+def test_build_litellm_config_ollama_uses_correct_prefix(store, monkeypatch):
+    import core.providers as prov
+    monkeypatch.setattr(prov, "_ollama_reachable", lambda *a, **kw: True)
     from core.providers import build_litellm_config
     config = build_litellm_config(store)
     ollama_entries = [m for m in config["model_list"] if "yggdrasil" in m["model_name"]]
