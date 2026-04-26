@@ -14,6 +14,7 @@ Exposes send, status, and sessions as MCP tools.
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -130,6 +131,94 @@ def openclaw_gateway_start(port: int = 18789, force: bool = False) -> dict:
         return {"started": True, "pid": proc.pid, "port": port}
     except Exception as e:
         return {"started": False, "error": str(e)}
+
+
+@mcp.tool()
+def openclaw_inbound_poll(
+    since_ms: int = 0,
+    agent_id: str = "main",
+    max_messages: int = 50,
+) -> dict:
+    """
+    Return inbound user messages from OpenClaw session transcripts since a given timestamp.
+
+    Reads JSONL transcript files written by the OpenClaw gateway. Each returned message
+    is a dict with keys: session_key, role, content, timestamp_ms, session_id.
+
+    Args:
+        since_ms: Only return messages with timestamp_ms > since_ms (0 = all).
+        agent_id: OpenClaw agent id (default: "main").
+        max_messages: Cap on returned messages.
+    """
+    state_dir = Path.home() / ".openclaw"
+    sessions_dir = state_dir / "agents" / agent_id / "sessions"
+    sessions_file = sessions_dir / "sessions.json"
+
+    if not sessions_file.exists():
+        return {"messages": [], "error": None, "sessions_file": str(sessions_file)}
+
+    try:
+        sessions_data = json.loads(sessions_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"messages": [], "error": f"sessions.json unreadable: {e}"}
+
+    sessions = sessions_data.get("sessions", [])
+    messages = []
+
+    for session in sessions:
+        session_id = session.get("sessionId", "")
+        session_key = session.get("key", "")
+        if not session_id:
+            continue
+
+        transcript = sessions_dir / f"{session_id}.jsonl"
+        if not transcript.exists():
+            continue
+
+        try:
+            for line in transcript.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if record.get("role") != "user":
+                    continue
+
+                ts = record.get("timestamp_ms") or record.get("ts") or record.get("timestamp") or 0
+                if isinstance(ts, str):
+                    try:
+                        ts = int(ts)
+                    except ValueError:
+                        ts = 0
+
+                if ts <= since_ms:
+                    continue
+
+                content = record.get("content", "")
+                if isinstance(content, list):
+                    parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                    content = " ".join(parts)
+
+                messages.append({
+                    "session_key": session_key,
+                    "session_id": session_id,
+                    "role": "user",
+                    "content": content,
+                    "timestamp_ms": ts,
+                })
+        except Exception as e:
+            messages.append({"error": f"transcript {session_id} unreadable: {e}"})
+
+    messages.sort(key=lambda m: m.get("timestamp_ms", 0))
+    return {
+        "messages": messages[:max_messages],
+        "count": len(messages),
+        "polled_at_ms": int(time.time() * 1000),
+    }
 
 
 def main():
