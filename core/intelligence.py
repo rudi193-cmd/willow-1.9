@@ -9,10 +9,20 @@ W19DM: Dark Matter — implicit connection inference
 W19RV: Revelation — cross-project convergence detection
 W19MR: Mirror — meta-community detection
 W19MC: Mycorrhizal — sparse KB feeding from adjacent projects
+PMEM2: Insight pass + Chunk synthesis
 """
 import psycopg2.extras
+import uuid as _uuid
 from collections import Counter
 from datetime import datetime, timezone, timedelta
+
+try:
+    from core.yggdrasil import ask_structured as _ygg_structured
+except Exception:
+    def _ygg_structured(prompt: str, timeout: int = 30) -> dict:  # type: ignore
+        return {"summary": None, "importance": 0}
+
+_AGENT = "hanuman"
 
 
 _SYSTEM_SOURCE_TYPES = frozenset({
@@ -329,3 +339,208 @@ def mycorrhizal_pass(bridge, sparse_threshold: int = 5) -> int:
             })
             written += 1
     return written
+
+
+# ── PMEM2: Insight pass ────────────────────────────────────────────────────────
+
+def _domain_from_target(target: str) -> str:
+    """Extract domain label from file target path.
+    'core/pg_bridge.py' → 'pg_bridge', '' → 'general'
+    """
+    if not target:
+        return "general"
+    parts = target.replace("\\", "/").split("/")
+    clean = parts[-1].replace(".py", "") if parts else "general"
+    return clean or "general"
+
+
+def _cluster_reflections(reflections: list) -> dict:
+    """Group reflections by domain. Returns {domain: [reflection, ...]}."""
+    clusters: dict = {}
+    for r in reflections:
+        if r.get("insight_skip"):
+            continue
+        domain = _domain_from_target(r.get("target", ""))
+        clusters.setdefault(domain, []).append(r)
+    return clusters
+
+
+def insight_pass(store_call) -> dict:
+    """Cluster reflection atoms by domain, write insight atom when N≥3.
+
+    store_call: callable(tool_name, args_dict, timeout=N) → result
+    Processes all existing reflections regardless of age (backlog pass).
+    Returns {"insights_written": int}.
+    """
+    try:
+        all_atoms = store_call("store_list", {
+            "app_id": _AGENT,
+            "collection": "hanuman/atoms/store",
+        }, timeout=8) or []
+    except Exception:
+        return {"insights_written": 0, "error": "store_list failed"}
+
+    reflections = [
+        a for a in all_atoms
+        if a.get("type") == "reflection"
+        and not a.get("insight_skip")
+        and a.get("invalid_at") is None
+    ]
+
+    clusters = _cluster_reflections(reflections)
+    insights_written = 0
+
+    for domain, members in clusters.items():
+        if len(members) < 3:
+            continue
+
+        ref_summaries = "\n".join(f"- {r.get('summary', '')}" for r in members[:10])
+        prompt = (
+            f"These {len(members)} session reflections are all about domain '{domain}':\n"
+            f"{ref_summaries}\n\n"
+            "Is this actually a pattern or a coincidence?\n"
+            "If a pattern: write the single transferable rule.\n"
+            "Format: SUMMARY: <one sentence rule> | IMPORTANCE: <1-10>\n"
+            "If coincidence: SUMMARY: coincidence | IMPORTANCE: 1"
+        )
+        result = _ygg_structured(prompt, timeout=60)
+
+        if not result["summary"] or result["importance"] < 6:
+            for r in members:
+                try:
+                    store_call("store_update", {
+                        "app_id": _AGENT,
+                        "collection": "hanuman/atoms/store",
+                        "record_id": r["id"],
+                        "record": {**r, "insight_skip": True},
+                    }, timeout=4)
+                except Exception:
+                    pass
+            continue
+
+        now = datetime.now(timezone.utc)
+        insight_id = f"insight-{_uuid.uuid4().hex[:8]}"
+
+        try:
+            store_call("store_put", {
+                "app_id": _AGENT,
+                "collection": "hanuman/atoms/store",
+                "record": {
+                    "id": insight_id,
+                    "type": "insight",
+                    "source": "insight",
+                    "summary": result["summary"],
+                    "domain": domain,
+                    "evidence": [r["id"] for r in members],
+                    "importance": result["importance"],
+                    "next_review": (now + timedelta(days=7)).isoformat(),
+                    "review_interval_days": 7,
+                    "stability": 2.0,
+                    "valid_at": now.isoformat(),
+                    "invalid_at": None,
+                    "superseded_by": None,
+                },
+            }, timeout=4)
+            insights_written += 1
+        except Exception:
+            continue
+
+        for r in members:
+            try:
+                store_call("store_update", {
+                    "app_id": _AGENT,
+                    "collection": "hanuman/atoms/store",
+                    "record_id": r["id"],
+                    "record": {**r, "invalid_at": now.isoformat(), "superseded_by": insight_id},
+                }, timeout=4)
+            except Exception:
+                pass
+
+    return {"insights_written": insights_written}
+
+
+# ── PMEM2: Chunk synthesis ─────────────────────────────────────────────────────
+
+_EXECUTABLE_DOMAINS = {
+    "pg_bridge", "willow_store", "stop", "session_start",
+    "intelligence", "metabolic", "sap_mcp", "post_tool",
+}
+
+
+def chunk_pass(store_call) -> dict:
+    """Cluster insights on executable domains into reusable chunk atoms.
+
+    store_call: callable(tool_name, args_dict, timeout=N) → result
+    Returns {"chunks_written": int}.
+    """
+    try:
+        all_atoms = store_call("store_list", {
+            "app_id": _AGENT,
+            "collection": "hanuman/atoms/store",
+        }, timeout=8) or []
+        existing_skills = store_call("store_list", {
+            "app_id": _AGENT,
+            "collection": "hanuman/skills/store",
+        }, timeout=5) or []
+    except Exception:
+        return {"chunks_written": 0, "error": "store_list failed"}
+
+    insights = [
+        a for a in all_atoms
+        if a.get("type") == "insight"
+        and a.get("invalid_at") is None
+        and a.get("domain") in _EXECUTABLE_DOMAINS
+    ]
+
+    existing_domains = {s.get("domain") for s in existing_skills}
+    by_domain: dict = {}
+    for ins in insights:
+        by_domain.setdefault(ins["domain"], []).append(ins)
+
+    chunks_written = 0
+    for domain, members in by_domain.items():
+        if len(members) < 2 or domain in existing_domains:
+            continue
+
+        insight_summaries = "\n".join(f"- {i['summary']}" for i in members)
+        prompt = (
+            f"These insights describe patterns in domain '{domain}':\n"
+            f"{insight_summaries}\n\n"
+            "Write a reusable pattern a developer can follow:\n"
+            "Format:\n"
+            "SUMMARY: <one-line pattern description>\n"
+            "IMPORTANCE: <1-10>"
+        )
+        result = _ygg_structured(prompt, timeout=60)
+        if not result["summary"] or result["importance"] < 6:
+            continue
+
+        now = datetime.now(timezone.utc)
+        chunk_id = f"chunk-{_uuid.uuid4().hex[:8]}"
+
+        try:
+            store_call("store_put", {
+                "app_id": _AGENT,
+                "collection": "hanuman/skills/store",
+                "record": {
+                    "id": chunk_id,
+                    "type": "chunk",
+                    "source": "chunk",
+                    "domain": domain,
+                    "summary": result["summary"],
+                    "evidence": [i["id"] for i in members],
+                    "importance": result["importance"],
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "next_review": (now + timedelta(days=14)).isoformat(),
+                    "review_interval_days": 14,
+                    "stability": 3.0,
+                    "valid_at": now.isoformat(),
+                    "invalid_at": None,
+                },
+            }, timeout=4)
+            chunks_written += 1
+        except Exception:
+            continue
+
+    return {"chunks_written": chunks_written}

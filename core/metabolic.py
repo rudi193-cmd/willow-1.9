@@ -223,6 +223,19 @@ def norn_pass(dry_run: bool = False) -> dict:
             print(f"[norn] intelligence pass error: {_e}", file=_sys.stderr)
             intelligence_error = str(_e)
 
+        # PMEM2: insight + chunk synthesis over SOIL atoms
+        insight_count = 0
+        chunk_count = 0
+        try:
+            from willow.fylgja._mcp import call as _soil_call
+            insight_report = intel.insight_pass(_soil_call)
+            insight_count = insight_report.get("insights_written", 0)
+            chunk_report = intel.chunk_pass(_soil_call)
+            chunk_count = chunk_report.get("chunks_written", 0)
+        except Exception as _ie:
+            import sys as _sys
+            print(f"[norn] pmem2 pass error: {_ie}", file=_sys.stderr)
+
         # Grove message ingest — optional, skipped silently if Grove not present
         try:
             import importlib.util as _ilu
@@ -249,6 +262,8 @@ def norn_pass(dry_run: bool = False) -> dict:
         "mirror": mirror_count,
         "mycorrhizal": mycorrhizal_count,
         "grove_indexed": grove_indexed,
+        "insights_written": insight_count,
+        "chunks_written": chunk_count,
     }
     if intelligence_error:
         report["intelligence_error"] = intelligence_error
