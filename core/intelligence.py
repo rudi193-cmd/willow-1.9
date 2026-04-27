@@ -373,16 +373,18 @@ def insight_pass(store_call) -> dict:
     Returns {"insights_written": int}.
     """
     try:
-        all_atoms = store_call("store_list", {
+        result = store_call("store_list", {
             "app_id": _AGENT,
             "collection": "hanuman/atoms/store",
-        }, timeout=8) or []
+        }, timeout=8)
+        all_atoms = result if isinstance(result, list) else []
     except Exception:
         return {"insights_written": 0, "error": "store_list failed"}
 
     reflections = [
         a for a in all_atoms
-        if a.get("type") == "reflection"
+        if isinstance(a, dict)
+        and a.get("type") == "reflection"
         and not a.get("insight_skip")
         and a.get("invalid_at") is None
     ]
@@ -474,14 +476,10 @@ def chunk_pass(store_call) -> dict:
     Returns {"chunks_written": int}.
     """
     try:
-        all_atoms = store_call("store_list", {
-            "app_id": _AGENT,
-            "collection": "hanuman/atoms/store",
-        }, timeout=8) or []
-        existing_skills = store_call("store_list", {
-            "app_id": _AGENT,
-            "collection": "hanuman/skills/store",
-        }, timeout=5) or []
+        r1 = store_call("store_list", {"app_id": _AGENT, "collection": "hanuman/atoms/store"}, timeout=8)
+        r2 = store_call("store_list", {"app_id": _AGENT, "collection": "hanuman/skills/store"}, timeout=5)
+        all_atoms = r1 if isinstance(r1, list) else []
+        existing_skills = r2 if isinstance(r2, list) else []
     except Exception:
         return {"chunks_written": 0, "error": "store_list failed"}
 
