@@ -96,17 +96,52 @@ def _write_depth(n: int) -> None:
         pass
 
 
+_F5_DOC_FIELDS = {"content", "body", "raw_content"}
+
+
+def _is_prose(s: str) -> bool:
+    """True if s looks like a prose document rather than a file path or short value."""
+    c = s.strip()
+    if c.startswith("/") and len(c) < 300 and "\n" not in c:
+        return False
+    return len(c) > 150 or c.count("\n") > 2 or c.count(". ") > 1
+
+
 def check_f5_canon(tool_name: str, tool_input: dict) -> str | None:
     field = F5_PROSE_TOOLS.get(tool_name)
     if not field:
         return None
     content = tool_input.get(field, "")
+
+    # Dict record: only flag if a doc-content field (content/body/raw_content) is prose.
+    # Structured metadata fields (description, summary, resolution, etc.) are always allowed.
+    if isinstance(content, dict):
+        for doc_field in _F5_DOC_FIELDS:
+            val = content.get(doc_field, "")
+            if isinstance(val, str) and _is_prose(val):
+                preview = val[:80].replace("\n", " ")
+                return (
+                    f"\n[WWSDN/F5] ⚠  CANON DRIFT — record.{doc_field} is prose, not a file path\n"
+                    f"[WWSDN/F5]    tool: {tool_name}  field: {field}.{doc_field}\n"
+                    f"[WWSDN/F5]    content ({len(val)} chars): \"{preview}...\"\n"
+                    f"[WWSDN/F5]    fix: write content to a file, store the path instead\n"
+                )
+        return None
+
+    # String record (model serialised the dict as JSON): parse and apply same check.
     if not isinstance(content, str) or not content.strip():
         return None
     c = content.strip()
-    if c.startswith("/") and len(c) < 300 and "\n" not in c:
-        return None
-    if len(c) > 150 or c.count("\n") > 2 or c.count(". ") > 1:
+    if c.startswith("{"):
+        try:
+            import json as _json
+            parsed = _json.loads(c)
+            if isinstance(parsed, dict):
+                return check_f5_canon(tool_name, {field: parsed})
+        except Exception:
+            pass
+
+    if _is_prose(c):
         preview = c[:80].replace("\n", " ")
         return (
             f"\n[WWSDN/F5] ⚠  CANON DRIFT — content is prose, not a file path\n"
