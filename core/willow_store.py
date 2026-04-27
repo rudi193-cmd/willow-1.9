@@ -226,7 +226,68 @@ class WillowStore:
             )
             conn.commit()
             conn.close()
+        self._hebbian_auto_link(collection, record)
         return rid, action, []
+
+    def _hebbian_auto_link(self, collection: str, new_record: dict) -> None:
+        """Auto-write domain-based edges when a new atom is stored.
+
+        Links new atom to up to 3 existing atoms with same domain in same collection.
+        Only fires for hanuman/atoms/store and hanuman/skills/store.
+        """
+        if collection not in ("hanuman/atoms/store", "hanuman/skills/store"):
+            return
+        domain = new_record.get("domain")
+        if not domain:
+            return
+        new_id = new_record.get("id")
+        if not new_id:
+            return
+
+        try:
+            existing = self.list(collection) or []
+        except Exception:
+            return
+
+        peers = [
+            a for a in existing
+            if a.get("domain") == domain
+            and a.get("id") != new_id
+            and a.get("invalid_at") is None
+        ][:3]
+
+        now = datetime.now().isoformat()
+        for peer in peers:
+            edge_id = f"edge-{str(new_id)[:8]}-{str(peer['id'])[:8]}"
+            try:
+                self.put("hanuman/atoms/edges", {
+                    "id": edge_id,
+                    "source_id": new_id,
+                    "target_id": peer["id"],
+                    "weight": 0.1,
+                    "co_activations": 0,
+                    "last_activated": now,
+                })
+            except Exception:
+                pass
+
+    def _increment_edge_weight(self, source_id: str, target_id: str) -> None:
+        """Increment weight and co_activations on edge between source and target."""
+        try:
+            edges = self.list("hanuman/atoms/edges") or []
+        except Exception:
+            return
+        for edge in edges:
+            if (edge.get("source_id") == source_id and edge.get("target_id") == target_id) \
+                    or (edge.get("source_id") == target_id and edge.get("target_id") == source_id):
+                edge["weight"] = round(float(edge.get("weight", 0.1)) + 0.05, 4)
+                edge["co_activations"] = int(edge.get("co_activations", 0)) + 1
+                edge["last_activated"] = datetime.now().isoformat()
+                try:
+                    self.update("hanuman/atoms/edges", edge["id"], edge)
+                except Exception:
+                    pass
+                return
 
     def update(self, collection: str, record_id: str, record: dict,
                deviation: float = 0.0) -> tuple:

@@ -195,6 +195,53 @@ def _ensure_grove_mcp() -> str:
         return "grove=unavailable"
 
 
+_SOURCE_MULTIPLIERS = {
+    "user_statement": 2.0,
+    "insight": 1.8,
+    "chunk": 1.5,
+    "reflection": 1.2,
+    "observation": 1.0,
+    "inference": 0.8,
+}
+
+
+def _position_order(atoms: list) -> list:
+    """Sort ascending by composite score — worst first, best last (U-curve fix)."""
+    def _score(a: dict) -> float:
+        return (
+            float(a.get("importance", 5))
+            * float(a.get("weight", 1.0))
+            * float(a.get("stability", 1.0))
+            * _SOURCE_MULTIPLIERS.get(a.get("source", "observation"), 1.0)
+        )
+    return sorted(atoms, key=_score)
+
+
+def _query_preference_atoms(atoms: list, limit: int = 10) -> list:
+    """Query B — user_statement or insight atoms, ordered by importance desc."""
+    filtered = [
+        a for a in atoms
+        if a.get("invalid_at") is None
+        and (a.get("source") == "user_statement" or a.get("type") == "insight")
+    ]
+    filtered.sort(key=lambda a: float(a.get("importance", 5)), reverse=True)
+    return filtered[:limit]
+
+
+def _query_world_state_atoms(atoms: list, limit: int = 10) -> list:
+    """Query C — chunk and insight atoms, valid only, ordered by next_review then weight."""
+    filtered = [
+        a for a in atoms
+        if a.get("invalid_at") is None
+        and a.get("type") in ("chunk", "insight")
+    ]
+    filtered.sort(key=lambda a: (
+        a.get("next_review") or "9999",
+        -float(a.get("weight", 1.0)),
+    ))
+    return filtered[:limit]
+
+
 def _run_silent_startup() -> dict:
     """
     Silent startup — runs before the first prompt regardless of what the user says.
@@ -256,6 +303,37 @@ def _run_silent_startup() -> dict:
             result["top_flags"] = [f.get("title", "")[:60] for f in open_flags[:3]]
         except Exception:
             pass
+
+    # Query B — preference atoms (user_statement + insights)
+    # Query C — world state (chunks + insights)
+    result["preference_atoms"] = []
+    result["world_state_atoms"] = []
+    try:
+        all_atoms = call("store_list", {
+            "app_id": AGENT,
+            "collection": "hanuman/atoms/store",
+        }, timeout=6) or []
+        skills = call("store_list", {
+            "app_id": AGENT,
+            "collection": "hanuman/skills/store",
+        }, timeout=5) or []
+
+        result["preference_atoms"] = _position_order(_query_preference_atoms(all_atoms))
+        result["world_state_atoms"] = _position_order(
+            _query_world_state_atoms(all_atoms + skills)
+        )
+
+        # norn_pass review injection — atoms past their next_review date
+        today = datetime.now().date().isoformat()
+        due = [
+            a for a in all_atoms
+            if a.get("next_review") and a.get("next_review") <= today
+            and a.get("invalid_at") is None
+        ]
+        if due:
+            result["preference_atoms"] = due + result["preference_atoms"]
+    except Exception:
+        pass
 
     # 4. Promoted atoms (weight > 1.5 = frequently accessed historical context)
     try:
@@ -391,6 +469,16 @@ def main():
     if promoted:
         promoted_titles = [a.get("title", a.get("id", "?"))[:50] for a in promoted[:3]]
         lines.append("promoted atoms: " + " · ".join(promoted_titles))
+    # World state (Query C) — background context
+    world_state = startup.get("world_state_atoms", [])
+    if world_state:
+        ws_summaries = [a.get("summary", a.get("id", "?"))[:80] for a in world_state[-3:]]
+        lines.append("WORLD STATE: " + " · ".join(ws_summaries))
+    # Preference atoms (Query B) — how Sean wants things done
+    prefs = startup.get("preference_atoms", [])
+    if prefs:
+        pref_summaries = [a.get("summary", a.get("id", "?"))[:80] for a in prefs[-5:]]
+        lines.append("PREFERENCES: " + " · ".join(pref_summaries))
     # Next bite directive (from session composite, beats handoff narrative)
     if startup.get("next_bite"):
         lines.append(f"NEXT: {startup['next_bite']}")
