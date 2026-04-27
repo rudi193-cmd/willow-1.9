@@ -40,3 +40,21 @@ def test_ask_structured_fallback_on_bad_format():
         result = ygg.ask_structured("test")
     assert result["summary"] is not None
     assert 1 <= result["importance"] <= 10
+
+
+def test_ask_returns_none_on_malformed_json():
+    resp = MagicMock()
+    resp.read.return_value = b"not json at all"
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=resp):
+        result = ygg.ask("test prompt")
+    assert result is None
+
+
+def test_ask_structured_handles_whitespace_response():
+    mock_resp = _mock_response("   \n  ")
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = ygg.ask_structured("test")
+    assert result["summary"] is None
+    assert result["importance"] == 5

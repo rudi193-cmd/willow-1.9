@@ -51,6 +51,7 @@ def ask_structured(prompt: str, timeout: int = 30) -> dict:
                 pass
 
     if not summary:
-        summary = raw.strip().splitlines()[0][:200]
+        lines = raw.strip().splitlines()
+        summary = lines[0][:200] if lines else None
 
     return {"summary": summary, "importance": max(1, min(10, importance))}
