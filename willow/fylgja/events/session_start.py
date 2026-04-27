@@ -335,6 +335,19 @@ def _run_silent_startup() -> dict:
     except Exception:
         pass
 
+    # Corpus context — seed (motivation), preferences, corrections
+    result["corpus_seed"] = ""
+    result["corpus_preferences"] = []
+    result["corpus_corrections"] = []
+    try:
+        from willow.corpus import load_context as _corpus_load
+        corpus = _corpus_load(AGENT)
+        result["corpus_seed"] = corpus.get("seed", "")
+        result["corpus_preferences"] = corpus.get("preferences", [])
+        result["corpus_corrections"] = corpus.get("corrections", [])
+    except Exception:
+        pass
+
     # 4. Promoted atoms (weight > 1.5 = frequently accessed historical context)
     try:
         promoted = call("willow_knowledge_search", {
@@ -474,6 +487,13 @@ def main():
     if world_state:
         ws_summaries = [a.get("summary", a.get("id", "?"))[:80] for a in world_state[-3:]]
         lines.append("WORLD STATE: " + " · ".join(ws_summaries))
+    # Corpus seed — motivation anchor
+    if startup.get("corpus_seed"):
+        lines.append(f"MOTIVATION: {startup['corpus_seed'][:140]}")
+    # Corpus corrections — explicit session corrections
+    corpus_corrections = startup.get("corpus_corrections", [])
+    if corpus_corrections:
+        lines.append("CORRECTIONS: " + " · ".join(c[:80] for c in corpus_corrections[-5:]))
     # Preference atoms (Query B) — how Sean wants things done
     prefs = startup.get("preference_atoms", [])
     if prefs:
