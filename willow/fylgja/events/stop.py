@@ -5,7 +5,8 @@ Heavy pipeline (handoff writing) lives in events/shutdown.py — run via /shutdo
 """
 import json
 import sys
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from willow.fylgja._state import get_trust_state, save_trust_state
@@ -34,6 +35,59 @@ def read_turns_since(cursor: str, turns_file: Path) -> list[str]:
     except Exception:
         pass
     return lines
+
+
+def _compute_affect(session_id: str) -> str:
+    """Derive affect from trace atoms. No LLM — pattern matching only."""
+    if call is None:
+        return "neutral"
+    try:
+        traces = call("store_list", {
+            "app_id": _AGENT,
+            "collection": "hanuman/turns/store",
+        }, timeout=5) or []
+    except Exception:
+        return "neutral"
+
+    session_traces = [t for t in traces if t.get("session_id") == session_id]
+    if not session_traces:
+        return "neutral"
+
+    pairs = Counter((t.get("tool", ""), t.get("target", "")) for t in session_traces)
+    repeated = sum(1 for count in pairs.values() if count > 1)
+    return "friction" if repeated >= 1 else "clean"
+
+
+def _write_failure_atom(session_id: str, traces: list) -> None:
+    """Write failure atom to hanuman/atoms/store. Only called for friction sessions."""
+    if call is None:
+        return
+    pairs = Counter((t.get("tool", ""), t.get("target", "")) for t in traces)
+    primary_target = pairs.most_common(1)[0][0][1] if pairs else "unknown"
+    n_retries = sum(c - 1 for c in pairs.values() if c > 1)
+
+    try:
+        call("store_put", {
+            "app_id": _AGENT,
+            "collection": "hanuman/atoms/store",
+            "record": {
+                "id": f"failure-{session_id[:8]}",
+                "type": "failure",
+                "source": "failure",
+                "session_id": session_id,
+                "target": primary_target,
+                "summary": (
+                    f"Session had friction on {primary_target}. "
+                    f"{n_retries} repeated tool+target pair(s) detected."
+                ),
+                "affect": "friction",
+                "resolved": False,
+                "valid_at": datetime.now(timezone.utc).isoformat(),
+                "invalid_at": None,
+            },
+        }, timeout=4)
+    except Exception:
+        pass
 
 
 def mark_session_clean(turn_count: int = 0) -> None:
@@ -98,6 +152,24 @@ def main():
 
     # Write session composite
     _write_session_composite(session_id)
+
+    # Affect tagging + failure atom
+    affect = "neutral"
+    session_traces: list = []
+    try:
+        affect = _compute_affect(session_id)
+        if affect == "friction" and call is not None:
+            try:
+                all_traces = call("store_list", {
+                    "app_id": _AGENT,
+                    "collection": "hanuman/turns/store",
+                }, timeout=5) or []
+                session_traces = [t for t in all_traces if t.get("session_id") == session_id]
+            except Exception:
+                session_traces = []
+            _write_failure_atom(session_id, session_traces)
+    except Exception:
+        pass
 
     sys.exit(0)
 
