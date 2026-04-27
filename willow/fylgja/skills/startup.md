@@ -24,6 +24,7 @@ description: Willow 1.9 session boot — health check, handoff load, flag scan, 
    ```
    Also reset `~/.willow/anchor_state.json` to `{"prompt_count": 0}`.
 6. **Report** — open flag count first (omit if zero), then subsystems, then last handoff summary (3 sentences max).
+7. **Launch Grove monitor** — get current high-water marks per channel via direct Postgres, then start a persistent Monitor using the pattern in `grove-persistent-monitor.md`. Set cursors to current IDs — never 0. Grove presence is not optional.
 
 ## Rules
 
