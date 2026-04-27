@@ -66,8 +66,11 @@ def test_stop_writes_session_composite():
     with patch("willow.fylgja.events.stop.call", fake_call):
         _run_stop({"session_id": "abcdef1234567890"})
     store_calls = [c for c in calls if c[0] == "store_put"]
-    assert len(store_calls) == 1
-    record = store_calls[0][1]["record"]
+    # At least 1: session composite; may also write reflection_pending
+    assert len(store_calls) >= 1
+    session_puts = [c for c in store_calls if c[1].get("collection") == "hanuman/sessions/store"]
+    assert len(session_puts) == 1
+    record = session_puts[0][1]["record"]
     assert record["type"] == "session"
     assert record["session_id"] == "abcdef1234567890"
     assert record["id"].startswith("session-abcdef12")

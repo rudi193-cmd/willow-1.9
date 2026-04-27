@@ -204,6 +204,8 @@ def norn_pass(dry_run: bool = False) -> dict:
     draugr_count = serendipity_count = dark_matter_count = 0
     revelation_count = mirror_count = mycorrhizal_count = 0
     grove_indexed = 0
+    insight_count = 0
+    chunk_count = 0
     intelligence_error = None
 
     if not dry_run:
