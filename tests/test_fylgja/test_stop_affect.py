@@ -51,6 +51,57 @@ def test_write_failure_atom_calls_store_put():
     assert record["resolved"] is False
 
 
+def test_write_reflection_atom_friction_calls_yggdrasil():
+    calls = []
+    def fake_call(tool, args, timeout=5):
+        calls.append((tool, args))
+        return {"ok": True}
+    def fake_ygg(prompt, timeout=4):
+        return {"summary": "Don't reuse the same file path twice.", "importance": 7}
+
+    with patch("willow.fylgja.events.stop.call", fake_call), \
+         patch("willow.fylgja.events.stop._ygg_structured", fake_ygg):
+        stop_mod._write_reflection_atom("sess-001", "friction", FRICTION_TRACES)
+
+    store_puts = [(t, a) for t, a in calls if t == "store_put"]
+    assert len(store_puts) == 1
+    record = store_puts[0][1]["record"]
+    assert record["type"] == "reflection"
+    assert record["importance"] == 7
+    assert "next_review" in record
+
+
+def test_write_reflection_atom_clean_writes_pending():
+    calls = []
+    def fake_call(tool, args, timeout=5):
+        calls.append((tool, args))
+        return {"ok": True}
+
+    with patch("willow.fylgja.events.stop.call", fake_call):
+        stop_mod._write_reflection_atom("sess-002", "clean", CLEAN_TRACES)
+
+    store_puts = [(t, a) for t, a in calls if t == "store_put"]
+    assert len(store_puts) == 1
+    assert store_puts[0][1]["record"]["type"] == "reflection_pending"
+
+
+def test_write_reflection_atom_friction_degrades_on_ygg_failure():
+    calls = []
+    def fake_call(tool, args, timeout=5):
+        calls.append((tool, args))
+        return {"ok": True}
+    def fake_ygg(prompt, timeout=4):
+        return {"summary": None, "importance": 0}
+
+    with patch("willow.fylgja.events.stop.call", fake_call), \
+         patch("willow.fylgja.events.stop._ygg_structured", fake_ygg):
+        stop_mod._write_reflection_atom("sess-001", "friction", FRICTION_TRACES)
+
+    store_puts = [(t, a) for t, a in calls if t == "store_put"]
+    assert len(store_puts) == 1
+    assert store_puts[0][1]["record"]["type"] == "reflection_pending"
+
+
 def test_compute_affect_call_failure_returns_neutral():
     def fake_call(tool, args, timeout=5):
         raise RuntimeError("mcp down")
