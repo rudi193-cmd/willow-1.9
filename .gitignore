@@ -8,3 +8,19 @@ build/
 .pytest_cache/
 .mcp.json
 .worktrees/
+
+# Runtime logs — generated at runtime, not for version control
+sap/log/*.jsonl
+sap/log/*.md
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# Python virtual environments
+.venv/
+venv/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
