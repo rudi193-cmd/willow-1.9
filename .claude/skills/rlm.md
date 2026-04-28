@@ -39,8 +39,10 @@ python3 - <<'PYEOF'
 import sys, os, pathlib
 
 context_path = "<CONTEXT_PATH>"   # substitute $ARGUMENTS[context]
-chunk_chars = <CHUNK_CHARS>       # substitute $ARGUMENTS[chunk_chars] or 200000
-out_dir = pathlib.Path(".claude/rlm_state/chunks")
+chunk_chars = <CHUNK_CHARS>       # substitute with integer, no quotes (e.g. 200000)
+import subprocess
+repo_root = pathlib.Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"]).decode().strip())
+out_dir = repo_root / ".claude/rlm_state/chunks"
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # Remove any previous chunks
@@ -98,4 +100,4 @@ rm -rf .claude/rlm_state/chunks/
 - Never load raw chunk content into the main session context.
 - Subagents cannot spawn further subagents (Claude Code depth limit).
 - If a chunk's `relevant` list is empty and `answer_if_complete` is null, skip it — don't quote its `missing` list as evidence.
-- State dir `.claude/rlm_state/` is in `.gitignore` — do not commit chunk files.
+- Verify `.claude/rlm_state/` is in `.gitignore` before proceeding; add it if missing. Do not commit chunk files.
