@@ -3,7 +3,7 @@ import requests
 
 OLLAMA_URL = "http://localhost:11434/api/embeddings"
 MODEL = "nomic-embed-text"
-TIMEOUT_S = 5
+TIMEOUT_S = 60
 
 
 def embed(text: str) -> list[float] | None:
