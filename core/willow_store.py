@@ -21,6 +21,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    import sqlite_vec
+    _VEC_AVAILABLE = True
+except ImportError:
+    sqlite_vec = None
+    _VEC_AVAILABLE = False
+
+try:
+    from core.embedder import embed
+except ImportError:
+    def embed(text):  # noqa: E306
+        return None
+
 _DEFAULT_STORE_ROOT = Path.home() / ".willow" / "store"
 
 MAX_RECORD_BYTES = 100_000  # 100KB per record
@@ -188,6 +201,13 @@ class WillowStore:
             )
         """)
         _ensure_columns(conn)
+        if _VEC_AVAILABLE:
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS records_vec USING vec0(embedding float[768])"
+            )
         return conn
 
     def _ts_cols(self, conn: sqlite3.Connection) -> list[str]:
@@ -214,6 +234,8 @@ class WillowStore:
             raise ValueError(f"Record too large: {len(data)} bytes (max {MAX_RECORD_BYTES})")
 
         now = datetime.now().isoformat()
+        vec = embed(data[:2000]) if _VEC_AVAILABLE else None
+
         with self._lock:
             conn = self._conn(collection)
             conn.execute(
@@ -224,6 +246,17 @@ class WillowStore:
                 "INSERT INTO audit_log (record_id, operation, deviation, action, timestamp) VALUES (?, 'create', ?, ?, ?)",
                 (rid, deviation, action, now)
             )
+            if _VEC_AVAILABLE:
+                rowid = conn.execute(
+                    "SELECT rowid FROM records WHERE id = ?", (rid,)
+                ).fetchone()[0]
+                if vec is not None:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO records_vec(rowid, embedding) VALUES (?, ?)",
+                        (rowid, sqlite_vec.serialize_float32(vec)),
+                    )
+                else:
+                    conn.execute("DELETE FROM records_vec WHERE rowid = ?", (rowid,))
             conn.commit()
             conn.close()
         self._hebbian_auto_link(collection, record)
@@ -319,6 +352,17 @@ class WillowStore:
                 "INSERT INTO audit_log (record_id, operation, deviation, action, timestamp) VALUES (?, 'update', ?, ?, ?)",
                 (rid, deviation, action, now)
             )
+            if _VEC_AVAILABLE:
+                rowid = conn.execute(
+                    "SELECT rowid FROM records WHERE id = ?", (rid,)
+                ).fetchone()[0]
+                conn.execute("DELETE FROM records_vec WHERE rowid = ?", (rowid,))
+                vec = embed(data[:2000])
+                if vec is not None:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO records_vec(rowid, embedding) VALUES (?, ?)",
+                        (rowid, sqlite_vec.serialize_float32(vec)),
+                    )
             conn.commit()
             conn.close()
         return rid, action, []
@@ -379,6 +423,23 @@ class WillowStore:
         for collection in self.collections():
             results.extend(self.search(collection, query))
         return results
+
+    def search_semantic(self, collection: str, query: str, limit: int = 20) -> list:
+        if not _VEC_AVAILABLE:
+            return self.search(collection, query)
+        vec = embed(query)
+        if vec is None:
+            return self.search(collection, query)
+        conn = self._conn(collection)
+        vec_bytes = sqlite_vec.serialize_float32(vec)
+        rows = conn.execute("""
+            SELECT r.data FROM records r
+            JOIN records_vec rv ON rv.rowid = r.rowid
+            WHERE rv.embedding MATCH ? AND k = ?
+            AND r.deleted = 0
+        """, (vec_bytes, limit)).fetchall()
+        conn.close()
+        return [json.loads(row["data"]) for row in rows]
 
     # ── Delete ─────────────────────────────────────────────────────────────────
 
