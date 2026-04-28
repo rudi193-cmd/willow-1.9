@@ -16,6 +16,9 @@ sap/log/*.md
 # Claude Code worktrees
 .claude/worktrees/
 
+# RLM chunk state — ephemeral, never commit
+.claude/rlm_state/
+
 # Python virtual environments
 .venv/
 venv/
