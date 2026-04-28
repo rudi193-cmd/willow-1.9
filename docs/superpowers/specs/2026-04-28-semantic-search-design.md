@@ -203,6 +203,8 @@ def search_semantic(self, collection: str, query: str, limit: int = 20) -> list:
 
 `willow_knowledge_search`, `store_search`, and `opus_search` gain `semantic: bool = False`. Default is `False` — existing behavior preserved, no regressions.
 
+`search_jeles_semantic()` gains `days_ago: int | None = None`. When set, adds `AND created_at > now() - interval '%s days'` to the ANN query. Not exposed as an MCP parameter — called internally by the jeles extract/search flow. Suggested by Rendereason: Jeles session atoms are time-anchored; recent context is more signal than older atoms.
+
 ## Fallback Chain
 
 ```
