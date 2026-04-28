@@ -504,6 +504,16 @@ def main():
         lines.append(f"NEXT: {startup['next_bite']}")
     elif startup["handoff_summary"]:
         lines.append(startup["handoff_summary"])
+    # Grove monitor auto-launch status
+    grove_pid_file = Path("/tmp/grove-monitor.pid")
+    grove_log_file = Path("/tmp/grove-monitor.log")
+    if grove_pid_file.exists() and grove_log_file.exists():
+        lines.append(
+            "GROVE MONITOR: background process active — "
+            "call Monitor(description='Grove all channels', persistent=True, "
+            "command='tail -f /tmp/grove-monitor.log | grep --line-buffered .') "
+            "to subscribe to notifications"
+        )
     if startup["postgres"] == "unknown":
         lines.append("BOOT DEGRADED — invoke /startup before responding to anything.")
     if startup.get("loaded_skills"):
