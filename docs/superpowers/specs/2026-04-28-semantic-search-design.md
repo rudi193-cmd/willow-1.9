@@ -116,15 +116,21 @@ def embed(text: str) -> list[float] | None:
 
 Embedding is attempted after the record is written. If `embed()` returns `None`, the row is persisted without an embedding — the write never fails due to Ollama being unavailable.
 
-### Update behavior (knowledge_put upsert)
+### Update behavior
 
-`knowledge_put()` uses `ON CONFLICT (id) DO UPDATE SET`. The SET clause includes `embedding = EXCLUDED.embedding` so a revised title/summary triggers a fresh embed. If Ollama is down, the upserted embedding is set to NULL — backfill picks it up. A stale embedding is never left on a record whose content has changed.
+**Postgres (`knowledge_put` upsert):** `knowledge_put()` uses `ON CONFLICT (id) DO UPDATE SET`. The SET clause includes `embedding = EXCLUDED.embedding` so a revised title/summary triggers a fresh embed. If Ollama is down, the upserted embedding is set to NULL — backfill picks it up. A stale embedding is never left on a record whose content has changed.
+
+**SOIL (`store.update()`):** `update()` does `INSERT OR REPLACE INTO records` but never touches `records_vec`. After the record write, `store.update()` must also upsert the embedding into `records_vec` by rowid. If Ollama is down, delete the `records_vec` row for that rowid (forcing backfill) rather than leaving a stale vector.
 
 ### Backfill
 
-Existing records (209K KB atoms + 2.1M SOIL records + opus_atoms + jeles_atoms) are **not** backfilled inline. A `willow_embed_backfill` Kart task processes rows with `embedding IS NULL` in batches of 100 with a 50ms sleep between batches.
+**Postgres:** `willow_embed_backfill` Kart task queries `embedding IS NULL` on `knowledge`, `opus_atoms`, and `jeles_atoms` in batches of 100 with 50ms sleep.
 
-**Auto-queue at startup:** During the Willow session start sequence, after the DB health gate, SAP checks `SELECT COUNT(*) FROM knowledge WHERE embedding IS NULL` (and same for `opus_atoms`, `jeles_atoms`). If any count > 0, it auto-submits `willow_embed_backfill`. Old records remain findable via substring search until backfilled.
+**SOIL:** SOIL is per-collection SQLite files. The backfill task calls `store.collections()` (which does `root.rglob("*.db")`) to enumerate all collection files, then for each collection queries `SELECT r.rowid, r.data FROM records r LEFT JOIN records_vec rv ON rv.rowid = r.rowid WHERE rv.rowid IS NULL AND r.deleted = 0` to find unembedded records. Processes in batches of 100 per collection.
+
+**Backfill priority:** Collections with prose-heavy records (notes, summaries, descriptions) should be backfilled first. Collections with primarily structured records (flags, tasks, anchors) have poor semantic signal from raw JSON — `{"flag_state": "open", "severity": 3}` embeds poorly. These are still backfilled (they benefit from hybrid RRF's ILIKE leg), but should be deprioritized in the Kart task's collection ordering.
+
+**Auto-queue at startup:** During the Willow session start sequence, after the DB health gate, SAP checks `SELECT COUNT(*) FROM knowledge WHERE embedding IS NULL` (and same for `opus_atoms`, `jeles_atoms`). If any count > 0, it auto-submits `willow_embed_backfill`. SOIL is not checked at startup — the Kart task handles it. Old records remain findable via substring search until backfilled.
 
 ## Search Path
 
@@ -211,7 +217,8 @@ semantic=False                                 → ILIKE/substring (existing, de
 | Failure | Behavior |
 |---------|----------|
 | Ollama unavailable at write time | Row written without embedding; no error surfaced |
-| Ollama unavailable at update time | embedding set to NULL in upsert; backfill picks it up |
+| Ollama unavailable at Postgres update time | embedding set to NULL in upsert; backfill picks it up |
+| Ollama unavailable at SOIL update time | `records_vec` row deleted for that rowid; backfill re-embeds on next pass |
 | pgvector extension missing | `UndefinedFunction` caught in write path; GAP log entry written; row written without embedding |
 | sqlite-vec unavailable | `ImportError` caught at module load; `search_semantic()` falls back to substring; one startup log line |
 | `embedding IS NULL` in ANN query | Excluded from ANN leg; ILIKE leg still contributes to RRF |
