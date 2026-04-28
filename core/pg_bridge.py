@@ -427,6 +427,17 @@ def init_schema(conn: "psycopg2.connection") -> None:
     conn.commit()
 
 
+def _rrf_merge(ann_results: list, ilike_results: list, k: int = 60) -> list:
+    scores = {}
+    for rank, row in enumerate(ann_results):
+        scores.setdefault(row["id"], {"row": row, "score": 0})
+        scores[row["id"]]["score"] += 1 / (k + rank + 1)
+    for rank, row in enumerate(ilike_results):
+        scores.setdefault(row["id"], {"row": row, "score": 0})
+        scores[row["id"]]["score"] += 1 / (k + rank + 1)
+    return [v["row"] for v in sorted(scores.values(), key=lambda x: -x["score"])]
+
+
 class PgBridge:
     def __init__(self):
         self.conn = get_connection()
@@ -644,6 +655,68 @@ class PgBridge:
         where = " AND ".join(filters)
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(f"SELECT * FROM knowledge WHERE {where} LIMIT %s", params + [limit])
+            return [dict(r) for r in cur.fetchall()]
+
+    def _knowledge_ann(self, vec: list, limit: int,
+                       project: Optional[str] = None) -> list:
+        vec_str = str(vec)
+        filters = ["embedding IS NOT NULL", "invalid_at IS NULL"]
+        params: list = [vec_str, limit]
+        if project:
+            filters.insert(1, "project = %s")
+            params.insert(1, project)
+        where = " AND ".join(filters)
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT *, embedding <=> %s::vector AS distance"
+                f" FROM knowledge WHERE {where}"
+                f" ORDER BY distance ASC LIMIT %s",
+                params,
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def knowledge_search_semantic(self, query: str, limit: int = 20,
+                                   project: Optional[str] = None) -> list:
+        vec = embed(query)
+        if vec is None:
+            return self.knowledge_search(query, limit=limit, project=project)
+        ann = self._knowledge_ann(vec, limit=limit, project=project)
+        ilike = self.knowledge_search(query, limit=limit, project=project)
+        return _rrf_merge(ann, ilike)[:limit]
+
+    def search_opus_semantic(self, query: str, limit: int = 20) -> list:
+        vec = embed(query)
+        if vec is None:
+            return self.search_opus(query, limit=limit)
+        vec_str = str(vec)
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT *, embedding <=> %s::vector AS distance
+                FROM opus_atoms WHERE embedding IS NOT NULL
+                ORDER BY distance ASC LIMIT %s
+            """, (vec_str, limit))
+            ann = [dict(r) for r in cur.fetchall()]
+        ilike = self.search_opus(query, limit=limit)
+        return _rrf_merge(ann, ilike)[:limit]
+
+    def search_jeles_semantic(self, query: str, limit: int = 20,
+                               days_ago: Optional[int] = None) -> list:
+        vec = embed(query)
+        if vec is None:
+            return []
+        vec_str = str(vec)
+        filters = ["embedding IS NOT NULL"]
+        params: list = [vec_str, limit]
+        if days_ago is not None:
+            filters.append(f"created_at > now() - interval '{days_ago} days'")
+        where = " AND ".join(filters)
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT *, embedding <=> %s::vector AS distance"
+                f" FROM jeles_atoms WHERE {where}"
+                f" ORDER BY distance ASC LIMIT %s",
+                params,
+            )
             return [dict(r) for r in cur.fetchall()]
 
     def knowledge_at(self, query: str, at_time: datetime,
