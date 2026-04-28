@@ -204,6 +204,13 @@ CREATE TABLE IF NOT EXISTS forks (
 
 # Columns added after initial deployment — safe to run repeatedly.
 _MIGRATIONS = [
+    # pgvector — must come before embedding column additions
+    "CREATE EXTENSION IF NOT EXISTS vector",
+    # embedding columns
+    "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS embedding VECTOR(768)",
+    "ALTER TABLE opus_atoms ADD COLUMN IF NOT EXISTS embedding VECTOR(768)",
+    "ALTER TABLE jeles_atoms ADD COLUMN IF NOT EXISTS embedding VECTOR(768)",
+    # existing migrations
     "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT 'global'",
     "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS valid_at TIMESTAMPTZ NOT NULL DEFAULT now()",
     "ALTER TABLE knowledge ADD COLUMN IF NOT EXISTS invalid_at TIMESTAMPTZ",
@@ -238,6 +245,12 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_visit ON knowledge (visit_count DESC);
 CREATE INDEX IF NOT EXISTS idx_forks_status ON forks (status);
 CREATE INDEX IF NOT EXISTS idx_forks_created_at ON forks (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_fork_id ON knowledge (fork_id) WHERE fork_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS knowledge_embedding_hnsw
+    ON knowledge USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS opus_atoms_embedding_hnsw
+    ON opus_atoms USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS jeles_atoms_embedding_hnsw
+    ON jeles_atoms USING hnsw (embedding vector_cosine_ops);
 """
 
 
