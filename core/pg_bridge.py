@@ -21,6 +21,12 @@ try:
 except ImportError:
     _PG_AVAILABLE = False
 
+try:
+    from core.embedder import embed
+except ImportError:
+    def embed(text):  # noqa: E306
+        return None
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS knowledge (
@@ -558,13 +564,19 @@ class PgBridge:
 
     def knowledge_put(self, record: dict) -> str:
         self._ensure_conn()
+        title = record.get("title") or ""
+        summary = record.get("summary") or ""
+        vec = embed(f"{title} {summary}")
+        vec_str = str(vec) if vec is not None else None
         with self.conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO knowledge
-                    (id, project, valid_at, invalid_at, title, summary, content, source_type, category)
+                    (id, project, valid_at, invalid_at, title, summary, content,
+                     source_type, category, embedding)
                 VALUES
                     (%(id)s, %(project)s, %(valid_at)s, %(invalid_at)s,
-                     %(title)s, %(summary)s, %(content)s, %(source_type)s, %(category)s)
+                     %(title)s, %(summary)s, %(content)s, %(source_type)s, %(category)s,
+                     %(embedding)s::vector)
                 ON CONFLICT (id) DO UPDATE SET
                     project     = EXCLUDED.project,
                     valid_at    = EXCLUDED.valid_at,
@@ -572,7 +584,8 @@ class PgBridge:
                     summary     = EXCLUDED.summary,
                     content     = EXCLUDED.content,
                     source_type = EXCLUDED.source_type,
-                    category    = EXCLUDED.category
+                    category    = EXCLUDED.category,
+                    embedding   = EXCLUDED.embedding
             """, {
                 "id":          record["id"],
                 "project":     record.get("project", "global"),
@@ -583,6 +596,7 @@ class PgBridge:
                 "content":     psycopg2.extras.Json(record.get("content")),
                 "source_type": record.get("source_type"),
                 "category":    record.get("category"),
+                "embedding":   vec_str,
             })
         self.conn.commit()
         return record["id"]
@@ -724,11 +738,13 @@ class PgBridge:
         self._ensure_conn()
         try:
             atom_id = self.gen_id(8)
+            vec = embed(content)
+            vec_str = str(vec) if vec is not None else None
             with self.conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO opus_atoms (id, content, domain, depth, source_session)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (atom_id, content, domain, depth, source_session))
+                    INSERT INTO opus_atoms (id, content, domain, depth, source_session, embedding)
+                    VALUES (%s, %s, %s, %s, %s, %s::vector)
+                """, (atom_id, content, domain, depth, source_session, vec_str))
             self.conn.commit()
             return atom_id
         except Exception:
@@ -826,12 +842,14 @@ class PgBridge:
         self._ensure_conn()
         try:
             aid = self.gen_id(8)
+            vec = embed(f"{title or ''} {content}")
+            vec_str = str(vec) if vec is not None else None
             with self.conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO jeles_atoms
-                        (id, jsonl_id, agent, content, domain, depth, certainty, title)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """, (aid, jsonl_id, agent, content, domain, depth, certainty, title))
+                        (id, jsonl_id, agent, content, domain, depth, certainty, title, embedding)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector)
+                """, (aid, jsonl_id, agent, content, domain, depth, certainty, title, vec_str))
             self.conn.commit()
             return {"id": aid, "status": "extracted"}
         except Exception as e:
