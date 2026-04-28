@@ -23,7 +23,7 @@ def _pg_params() -> dict:
     """Unix socket by default. TCP only if WILLOW_PG_HOST is set. Mirrors pg_bridge._pg_params()."""
     import os
     params = {
-        "dbname": os.environ.get("WILLOW_PG_DB", "willow"),
+        "dbname": os.environ.get("WILLOW_PG_DB", "willow_19"),
         "user": os.environ.get("WILLOW_PG_USER", "sean-campbell"),
     }
     host = os.environ.get("WILLOW_PG_HOST")

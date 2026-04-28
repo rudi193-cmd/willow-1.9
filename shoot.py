@@ -172,7 +172,7 @@ def check_environment() -> dict:
             conn = psycopg2.connect(dsn, connect_timeout=3)
         else:
             conn = psycopg2.connect(
-                dbname=os.environ.get("WILLOW_PG_DB", "willow"),
+                dbname=os.environ.get("WILLOW_PG_DB", "willow_19"),
                 user=os.environ.get("WILLOW_PG_USER", os.environ.get("USER", "")),
                 connect_timeout=3,
             )
