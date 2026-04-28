@@ -112,6 +112,34 @@ except Exception as _pg_init_err:
     pg = None
     print(f"[pg] PgBridge init failed: {_pg_init_err}", file=sys.stderr)
 
+
+def _startup_backfill_check() -> None:
+    """After DB health gate: queue willow_embed_backfill if NULL embeddings exist."""
+    try:
+        from core.pg_bridge import PgBridge as _PB19
+        _pb = _PB19()
+        with _pb.conn.cursor() as _cur:
+            _cur.execute("""
+                SELECT
+                  (SELECT COUNT(*) FROM knowledge WHERE embedding IS NULL) +
+                  (SELECT COUNT(*) FROM opus_atoms WHERE embedding IS NULL) +
+                  (SELECT COUNT(*) FROM jeles_atoms WHERE embedding IS NULL)
+                AS total_null
+            """)
+            total_null = _cur.fetchone()[0]
+        if total_null > 0:
+            _pb.submit_task(
+                "willow_embed_backfill",
+                submitted_by="sap_startup",
+                agent="kart",
+            )
+            print(f"[startup] {total_null} rows with NULL embedding — willow_embed_backfill queued", file=sys.stderr)
+    except Exception as _e:
+        print(f"[startup] backfill check failed: {_e}", file=sys.stderr)
+
+
+_startup_backfill_check()
+
 # Cached 1.9 PgBridge for tools that need 1.9 methods (knowledge_at, etc.).
 # Safe without a lock: MCP stdio server is single-threaded asyncio. A race
 # would open at most two connections on first call; subsequent calls reuse the
@@ -215,6 +243,7 @@ async def list_tools() -> list[types.Tool]:
                     "collection": {"type": "string", "description": "Collection path to search within, e.g. 'hanuman/atoms'"},
                     "query": {"type": "string", "description": "Search terms — multiple words are ANDed"},
                     "after": {"type": "string", "description": "Optional ISO timestamp. Only return records whose 'timestamp' or 'date' field is strictly after this value."},
+                    "semantic": {"type": "boolean", "default": False, "description": "Use ANN semantic search via sqlite-vec (falls back to substring if unavailable)"},
                 },
                 "required": ["collection", "query"],
             },
@@ -318,6 +347,7 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "query": {"type": "string", "description": "Search query — plain text, matched against title and summary"},
                     "limit": {"type": "integer", "default": 20, "description": "Maximum results to return across atoms, entities, and ganesha (default 20)"},
+                    "semantic": {"type": "boolean", "default": False, "description": "Use hybrid ANN+ILIKE semantic search via pgvector (falls back to ILIKE if Ollama unavailable)"},
                 },
                 "required": ["query"],
             },
@@ -632,6 +662,7 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "query": {"type": "string", "description": "Search query — matched against opus atom title and content"},
                     "limit": {"type": "integer", "default": 20, "description": "Maximum results to return (default 20)"},
+                    "semantic": {"type": "boolean", "default": False, "description": "Use hybrid ANN+ILIKE semantic search via pgvector (falls back to ILIKE if Ollama unavailable)"},
                 },
                 "required": ["query"],
             },
@@ -1018,11 +1049,17 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                 _sanitize_result(result, f"store_get:{arguments['collection']}")
 
         elif name == "store_search":
-            result = store.search(
-                arguments["collection"],
-                arguments["query"],
-                after=arguments.get("after"),
-            )
+            if arguments.get("semantic"):
+                result = store.search_semantic(
+                    arguments["collection"],
+                    arguments["query"],
+                )
+            else:
+                result = store.search(
+                    arguments["collection"],
+                    arguments["query"],
+                    after=arguments.get("after"),
+                )
             _sanitize_result(result, f"store_search:{arguments['collection']}")
 
         elif name == "store_search_all":
@@ -1077,7 +1114,11 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             else:
                 query = arguments["query"]
                 limit = arguments.get("limit", 20)
-                knowledge = pg.knowledge_search(query, limit=limit)
+                if arguments.get("semantic"):
+                    pg19 = _get_pg19()
+                    knowledge = pg19.knowledge_search_semantic(query, limit=limit) if pg19 else pg.knowledge_search(query, limit=limit)
+                else:
+                    knowledge = pg.knowledge_search(query, limit=limit)
                 result = {
                     "knowledge": knowledge,
                     "ganesha_atoms": [],
@@ -1538,7 +1579,11 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             if not pg:
                 result = {"error": "not_available", "reason": "Postgres not connected"}
             else:
-                results = pg.search_opus(arguments["query"], arguments.get("limit", 20))
+                if arguments.get("semantic"):
+                    pg19 = _get_pg19()
+                    results = pg19.search_opus_semantic(arguments["query"], arguments.get("limit", 20)) if pg19 else pg.search_opus(arguments["query"], arguments.get("limit", 20))
+                else:
+                    results = pg.search_opus(arguments["query"], arguments.get("limit", 20))
                 result = {"results": results, "count": len(results)}
 
         elif name == "opus_ingest":
