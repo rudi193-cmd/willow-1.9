@@ -343,7 +343,7 @@ async def list_tools() -> list[types.Tool]:
         # ── Postgres-backed Willow tools ──────────────────────────────────────
         types.Tool(
             name="willow_knowledge_search",
-            description="Search Willow's Postgres knowledge graph (atoms, entities, ganesha). Returns pointers (title + path), not raw content. Use store_get to fetch the full record.",
+            description="Search Willow's Postgres knowledge graph before building anything. Returns atoms by title and summary. Search first — another agent may have already solved or decided this. Use store_get to fetch full atom content.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -408,7 +408,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="willow_status",
-            description="Willow system health: local store + Postgres + Ollama.",
+            description="Call this first. Confirms Postgres, SOIL, and Ollama are up. If degraded or down, surface it and stop — everything else depends on this.",
             inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
@@ -622,7 +622,7 @@ async def list_tools() -> list[types.Tool]:
         # ── Task Queue (Kart dispatch) ─────────────────────────────────────────
         types.Tool(
             name="willow_task_submit",
-            description="Submit a task to Kart's execution queue. Returns task_id for polling.",
+            description="Queue a shell command for Kart to execute asynchronously. Pass the full command string (e.g. 'cd ~/github/willow-1.9 && python3 scripts/foo.py'). Returns task_id — use willow_task_status to poll.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -835,7 +835,7 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="willow_handoff_latest",
-            description="Return the most recent session handoff: summary, open threads, and 17 questions. Use at session start to orient before touching any code.",
+            description="Call second (parallel with willow_status). Returns last session state: what was in-flight, what's pending, 17 questions. Read this before touching any code or submitting any task — work was in progress before this session.",
             inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
