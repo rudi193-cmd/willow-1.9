@@ -126,35 +126,6 @@ Three layers:
 
 ---
 
-## Connecting via MCP
-
-Any MCP client (Claude Code, Cursor, a custom LLM) connects via stdio:
-
-```json
-{
-  "mcpServers": {
-    "willow": {
-      "command": "python3",
-      "args": ["/path/to/willow-1.9/sap/sap_mcp.py"]
-    }
-  }
-}
-```
-
-The server sends orientation instructions in the `initialize` response — no tool call needed. Full onboarding doc: [`sap/ONBOARDING.md`](sap/ONBOARDING.md).
-
-**First five tools to call:**
-
-```
-willow_status          → confirm system is up
-willow_handoff_latest  → last session state
-grove_get_history      → what the fleet has been doing
-willow_knowledge_search → find existing knowledge before building
-willow_task_submit     → queue work for Kart
-```
-
----
-
 ## The Philosophy
 
 > Once there was a tree that remembered everything. Not the way trees usually remember — in rings, in the slow arithmetic of seasons — but precisely.
