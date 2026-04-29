@@ -177,7 +177,9 @@ _DEFAULT_HANDOFF_DIRS = ":".join([
 HANDOFF_DIRS = os.environ.get("WILLOW_HANDOFF_DIRS", _DEFAULT_HANDOFF_DIRS)
 
 store = WillowStore(STORE_ROOT)
-server = Server("willow-store")
+
+_ONBOARDING = (Path(__file__).parent / "ONBOARDING.md").read_text(encoding="utf-8")
+server = Server("willow-store", instructions=_ONBOARDING)
 
 _GAPS_LOG = Path(__file__).parent / "log" / "gaps.jsonl"
 
