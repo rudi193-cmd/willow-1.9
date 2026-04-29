@@ -1118,14 +1118,21 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
                 limit = arguments.get("limit", 20)
                 if arguments.get("semantic"):
                     pg19 = _get_pg19()
-                    knowledge = pg19.knowledge_search_semantic(query, limit=limit) if pg19 else pg.knowledge_search(query, limit=limit)
+                    if pg19:
+                        knowledge = pg19.knowledge_search_semantic(query, limit=limit)
+                        search_mode = "semantic"
+                    else:
+                        knowledge = pg.knowledge_search(query, limit=limit)
+                        search_mode = "degraded"
                 else:
                     knowledge = pg.knowledge_search(query, limit=limit)
+                    search_mode = "keyword"
                 result = {
                     "knowledge": knowledge,
                     "ganesha_atoms": [],
                     "entities": [],
                     "total": len(knowledge),
+                    "mode": search_mode,
                 }
                 _sanitize_result(result, "willow_knowledge_search")
                 for atom in knowledge[:3]:

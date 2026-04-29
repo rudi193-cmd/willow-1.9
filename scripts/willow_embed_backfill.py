@@ -11,6 +11,7 @@ Usage:
     python3 scripts/willow_embed_backfill.py [--limit N] [--dry-run]
 """
 import argparse
+import collections
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,10 +29,24 @@ PROGRESS_COLLECTION = "hanuman/tasks"
 PROGRESS_ID = "embed_backfill_progress"
 
 
+RATE_WINDOW = collections.deque(maxlen=10)  # (timestamp, done_count) for rolling rate
+
+
 def _write_progress(store: WillowStore, table: str, done: int, total: int, started_at: float) -> None:
-    elapsed = time.time() - started_at
+    now = time.time()
+    elapsed = now - started_at
     rate = done / elapsed if elapsed > 0 else 0
-    remaining = (total - done) / rate if rate > 0 else 0
+
+    RATE_WINDOW.append((now, done))
+    if len(RATE_WINDOW) >= 2:
+        dt = RATE_WINDOW[-1][0] - RATE_WINDOW[0][0]
+        dc = RATE_WINDOW[-1][1] - RATE_WINDOW[0][1]
+        rate_recent = dc / dt if dt > 0 else rate
+    else:
+        rate_recent = rate
+
+    display_rate = rate_recent if rate_recent > 0 else rate
+    remaining = (total - done) / display_rate if display_rate > 0 else 0
     store.put(PROGRESS_COLLECTION, {
         "id": PROGRESS_ID,
         "task": "willow_embed_backfill",
@@ -40,6 +55,7 @@ def _write_progress(store: WillowStore, table: str, done: int, total: int, start
         "total": total,
         "pct": round(100 * done / total, 1) if total else 0,
         "rate_per_sec": round(rate, 2),
+        "rate_recent": round(rate_recent, 2),
         "eta_seconds": int(remaining),
         "eta_human": f"{int(remaining // 3600)}h {int((remaining % 3600) // 60)}m",
         "started_at": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
