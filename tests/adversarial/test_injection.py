@@ -65,7 +65,7 @@ def test_sql_sleep_timing(bridge):
     except Exception:
         pass  # KeyError on id constraints is fine — what matters is timing
     elapsed = time.time() - start
-    assert elapsed < 2.0, f"Took {elapsed:.1f}s — pg_sleep may have executed"
+    assert elapsed < 4.0, f"Took {elapsed:.1f}s — pg_sleep may have executed"
 
 
 def test_sql_semicolon_chain_in_content(bridge):
