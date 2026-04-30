@@ -1,16 +1,15 @@
 # PR Status Report
 
-**Generated:** 2026-04-29T19:05:50Z
+**Generated:** 2026-04-30T12:00:00Z
 
 ---
 
 ## Access Constraints
 
-> The GitHub MCP server available in this session is scoped exclusively to
-> `rudi193-cmd/willow-1.9`. No `gh` CLI is installed, no `GITHUB_TOKEN` is
-> set, and unauthenticated GitHub REST API calls return HTTP 403. As a result,
-> the three requested PRs cannot be fetched and are recorded below with an
-> `ACCESS_DENIED` status.
+> The GitHub MCP server in this session is scoped exclusively to
+> `rudi193-cmd/willow-1.9`. No `gh` CLI is available. All three requested PRs
+> are in repositories outside that scope and return ACCESS_DENIED on every
+> fetch attempt. Status is unchanged from the 2026-04-29 run.
 
 ---
 
@@ -22,7 +21,7 @@
 | **CI checks** | UNKNOWN |
 | **Reviews** | UNKNOWN |
 | **Last commit SHA** | UNKNOWN |
-| **Fetch error** | HTTP 403 / no auth token; MCP restricted to rudi193-cmd/willow-1.9 |
+| **Fetch error** | MCP restricted to rudi193-cmd/willow-1.9 |
 
 ---
 
@@ -34,7 +33,7 @@
 | **CI checks** | UNKNOWN |
 | **Reviews** | UNKNOWN |
 | **Last commit SHA** | UNKNOWN |
-| **Fetch error** | HTTP 403 / no auth token; MCP restricted to rudi193-cmd/willow-1.9 |
+| **Fetch error** | MCP restricted to rudi193-cmd/willow-1.9 |
 
 ---
 
@@ -42,7 +41,7 @@
 
 | Field | Value |
 |-------|-------|
-| **State** | UNKNOWN — `willow-1.5` is outside MCP scope (MCP limited to `willow-1.9`) |
+| **State** | UNKNOWN — `willow-1.5` is outside MCP scope |
 | **CI checks** | UNKNOWN |
 | **Reviews** | UNKNOWN |
 | **Last commit SHA** | UNKNOWN |
@@ -52,11 +51,8 @@
 
 ## Action Required
 
-To enable this watcher to read cross-repo PR data, one of the following must be
-configured:
+To enable cross-repo PR tracking, configure one of:
 
-1. Set `GITHUB_TOKEN` (or `GH_TOKEN`) environment variable with at least
-   `repo:read` scope, **or**
-2. Expand the MCP server's repository allow-list to include the three repos
-   above, **or**
-3. Install the `gh` CLI and authenticate (`gh auth login`).
+1. `GITHUB_TOKEN` / `GH_TOKEN` env var with `repo:read` scope, **or**
+2. Expand MCP allow-list to include the three repos above, **or**
+3. Install and authenticate `gh` CLI (`gh auth login`).
