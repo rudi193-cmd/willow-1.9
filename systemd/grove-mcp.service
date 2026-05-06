@@ -8,7 +8,6 @@ Type=simple
 Environment=WILLOW_PG_DB=willow_19
 Environment=WILLOW_PG_USER=%u
 Environment=GROVE_MCP_PORT=8765
-Environment=GROVE_MCP_URL=https://prelaunch-bonus-effective.ngrok-free.dev
 Environment=PYTHONPATH=%h/github/safe-app-willow-grove
 ExecStart=/usr/bin/python3 -m grove.mcp_local --serve
 WorkingDirectory=%h/github/safe-app-willow-grove
