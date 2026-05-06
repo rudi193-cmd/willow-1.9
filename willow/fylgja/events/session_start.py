@@ -20,6 +20,49 @@ INDEX_DIR = Path.home() / "agents" / AGENT / "index"
 THREAD_FILE = Path("/tmp/willow-context-thread.json")
 
 
+# ---------------------------------------------------------------------------
+# Atom query helpers (used by tests and context-building paths)
+# ---------------------------------------------------------------------------
+
+_PREFERENCE_SOURCES = {"insight", "user_statement", "reflection"}
+_WORLD_STATE_TYPES = {"insight", "chunk"}
+_EXCLUDED_SOURCES = {"trace", "observation"}
+
+
+def _query_preference_atoms(atoms: list[dict], limit: int = 10) -> list[dict]:
+    """Return preference-relevant atoms: insight + user_statement sources, no invalid, capped."""
+    result = [
+        a for a in atoms
+        if a.get("source") in _PREFERENCE_SOURCES
+        and a.get("source") not in _EXCLUDED_SOURCES
+        and not a.get("invalid_at")
+    ]
+    result.sort(key=lambda a: a.get("importance", 0), reverse=True)
+    return result[:limit]
+
+
+def _query_world_state_atoms(atoms: list[dict], limit: int = 10) -> list[dict]:
+    """Return world-state atoms: insight + chunk types, no invalid, no traces."""
+    result = [
+        a for a in atoms
+        if a.get("type") in _WORLD_STATE_TYPES
+        and a.get("source") not in _EXCLUDED_SOURCES
+        and not a.get("invalid_at")
+    ]
+    result.sort(key=lambda a: a.get("importance", 0), reverse=True)
+    return result[:limit]
+
+
+def _position_order(atoms: list[dict]) -> list[dict]:
+    """Sort atoms worst-first, best-last (ascending importance × weight × stability score)."""
+    def _score(a: dict) -> float:
+        return a.get("importance", 0) * a.get("weight", 1.0) * a.get("stability", 1.0)
+
+    return sorted(atoms, key=_score)
+
+
+# ---------------------------------------------------------------------------
+
 def _clear_stale_thread():
     try:
         if THREAD_FILE.exists():

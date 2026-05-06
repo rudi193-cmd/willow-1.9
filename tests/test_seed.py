@@ -31,6 +31,7 @@ def test_step_1_idempotent(tmp_path, monkeypatch):
 def test_step_4_vault_creates_db(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     import importlib, root as seed
+    import core.vault; importlib.reload(core.vault)
     importlib.reload(seed)
     (tmp_path / ".willow").mkdir(parents=True, exist_ok=True)
     seed.step_4_vault()
@@ -47,6 +48,7 @@ def test_step_4_vault_creates_db(tmp_path, monkeypatch):
 def test_step_4_vault_key_permissions(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     import importlib, root as seed
+    import core.vault; importlib.reload(core.vault)
     importlib.reload(seed)
     (tmp_path / ".willow").mkdir(parents=True, exist_ok=True)
     seed.step_4_vault()
@@ -58,6 +60,7 @@ def test_step_4_vault_key_permissions(tmp_path, monkeypatch):
 def test_step_4_vault_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     import importlib, root as seed
+    import core.vault; importlib.reload(core.vault)
     importlib.reload(seed)
     (tmp_path / ".willow").mkdir(parents=True, exist_ok=True)
     seed.step_4_vault()

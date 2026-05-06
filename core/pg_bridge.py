@@ -478,8 +478,10 @@ class PgBridge:
             return
         # Clear any aborted transaction before probing — INERROR connections
         # pass the closed check but poison every subsequent query.
+        # Do NOT rollback INTRANS (status=2): that would destroy legitimate
+        # pending work from the caller's open transaction.
         try:
-            if self.conn.info.transaction_status in (2, 3):  # INTRANS or INERROR
+            if self.conn.info.transaction_status == 3:  # INERROR only
                 self.conn.rollback()
         except Exception:
             pass
@@ -668,14 +670,13 @@ class PgBridge:
         self._ensure_conn()
         # Split multi-word queries into AND-ed ILIKE terms so "grove fleet"
         # finds atoms containing both words, not the exact phrase.
+        # Empty query matches all rows (ILIKE '%%' is always true).
         words = query.split()
         filters = []
         params: list = []
         for word in words:
             filters.append("(title ILIKE %s OR summary ILIKE %s)")
             params.extend([f"%{word}%", f"%{word}%"])
-        if not filters:
-            return []
         if project:
             filters.append("project = %s")
             params.append(project)

@@ -87,6 +87,7 @@ def serendipity_pass(bridge, recent_days: int = 7,
         cur.execute("""
             SELECT title, summary FROM knowledge
             WHERE invalid_at IS NULL AND created_at >= %s
+            ORDER BY created_at DESC
             LIMIT 20
         """, (recent_cutoff,))
         recent = [dict(r) for r in cur.fetchall()]
@@ -103,7 +104,7 @@ def serendipity_pass(bridge, recent_days: int = 7,
         return []
 
     surfaced, seen = [], set()
-    for kw in list(keywords)[:5]:
+    for kw in sorted(keywords)[:20]:
         with bridge.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT * FROM knowledge

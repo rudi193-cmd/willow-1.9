@@ -102,9 +102,12 @@ def get_bridge(pg_dsn: Optional[str] = None):
     try:
         if pg_dsn:
             import psycopg2
+            import threading
             conn = psycopg2.connect(pg_dsn)
             bridge = mod.PgBridge.__new__(mod.PgBridge)
-            bridge.conn = conn
+            bridge._local = threading.local()
+            bridge._last_ingest_error = None
+            bridge._local.conn = conn
             mod.init_schema(conn)
             return _LiveBridge(bridge)
         else:
