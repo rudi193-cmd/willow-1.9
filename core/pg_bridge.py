@@ -469,6 +469,12 @@ class PgBridge:
     def __exit__(self, *_):
         self.close()
 
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
     # ── Connection resilience ─────────────────────────────────────────────────
 
     def _ensure_conn(self):

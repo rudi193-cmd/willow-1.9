@@ -21,6 +21,9 @@ def embed(text: str) -> list[float] | None:
             )
             resp.raise_for_status()
             return resp.json()["embedding"]
+        except requests.exceptions.ConnectionError:
+            # Service not running — don't retry, return immediately.
+            return None
         except Exception:
             if attempt < _RETRIES - 1:
                 time.sleep(_RETRY_DELAY_S)
