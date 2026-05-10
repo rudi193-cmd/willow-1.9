@@ -59,6 +59,30 @@ FEEDBACK_PATTERNS = [
     (r"(schema|column|table).{0,30}(missing|error|not found)", "technical", "Database schema error"),
 ]
 
+# Patterns that signal a genuine correction (user correcting agent behavior).
+# Ordered from most specific to most general. Short prompts (<20 chars) are skipped.
+_CORRECTION_PATTERNS = [
+    r"\bdon'?t\b.{0,40}\b(do|use|call|write|run|say|add|put|push|send|post|build)\b",
+    r"\bstop\b.{0,30}\b(doing|using|calling|saying|writing|adding|running)\b",
+    r"\bnever\b.{0,40}\b(do|use|call|write|run|say|add|put|push|send|post|build)\b",
+    r"\b(no|not)\b.{0,20}\b(that|this|like that|again|more)\b",
+    r"\byou (should|shouldn't|shouldn't|must|must not|mustn't)\b",
+    r"\b(wrong|incorrect|bad) (approach|way|pattern|method|call|tool)\b",
+    r"\b(you missed|you forgot|you skipped|you ignored)\b",
+    r"\balways\b.{0,30}\b(do|use|check|run|write|post|send)\b",
+    r"\b(i said|i told you|i asked you)\b",
+]
+
+
+def detect_correction(prompt: str) -> bool:
+    """Return True if prompt looks like a behavioral correction to the agent."""
+    if len(prompt.strip()) < 20:
+        return False
+    for pattern in _CORRECTION_PATTERNS:
+        if re.search(pattern, prompt, re.IGNORECASE):
+            return True
+    return False
+
 
 def detect_feedback(prompt: str) -> list[dict]:
     found, seen = [], set()
@@ -260,6 +284,33 @@ def _run_flat_handoff_checkpoint(session_id: str) -> None:
         pass
 
 
+def _run_corpus_capture(prompt: str, session_id: str) -> None:
+    """Stage correction atoms to corpus/corrections when a correction is detected."""
+    if not detect_correction(prompt):
+        return
+    try:
+        import sys as _sys
+        _repo_root = str(Path(__file__).parent.parent.parent.parent)
+        if _repo_root not in _sys.path:
+            _sys.path.insert(0, _repo_root)
+        from core.willow_store import WillowStore
+        _store = WillowStore()
+        import uuid as _uuid
+        record_id = f"corr-{_uuid.uuid4().hex[:8]}"
+        _store.put("corpus/corrections", {
+            "id": record_id,
+            "type": "correction",
+            "source": "prompt_submit_hook",
+            "content": prompt.strip()[:300],
+            "session_id": session_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "sandbox": True,
+            "b17": "CRPS0",
+        }, record_id=record_id)
+    except Exception:
+        pass
+
+
 def _run_build_continue() -> None:
     task = get_active_task()
     if not task:
@@ -320,6 +371,7 @@ def main():
     _run_anchor()
     _run_flat_handoff_checkpoint(session_id)
     _inject_dispatch_inbox()
+    _run_corpus_capture(prompt, session_id)
     _run_feedback(prompt, session_id)
     prompt = _run_notice(prompt, session_id)
     _log_turn(prompt, session_id)

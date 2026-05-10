@@ -29,6 +29,31 @@ AGENT = os.environ.get("WILLOW_AGENT_NAME", "hanuman")
 MAX_DEPTH = int(os.environ.get("WILLOW_AGENT_MAX_DEPTH", "3"))
 DEPTH_FILE = Path("/tmp/willow-agent-depth-stack.txt")
 
+_REPO_ROOT = str(Path(__file__).parent.parent.parent.parent)
+
+
+def _corpus_log_block(tool_name: str, reason: str, session_id: str) -> None:
+    """Write a correction atom to corpus/corrections when a tool is blocked."""
+    try:
+        if _REPO_ROOT not in sys.path:
+            sys.path.insert(0, _REPO_ROOT)
+        from core.willow_store import WillowStore
+        import uuid as _uuid
+        _store = WillowStore()
+        record_id = f"corr-{_uuid.uuid4().hex[:8]}"
+        _store.put("corpus/corrections", {
+            "id": record_id,
+            "type": "correction",
+            "source": "pre_tool_block",
+            "content": f"Blocked {tool_name}: {reason[:200]}",
+            "session_id": session_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "sandbox": True,
+            "b17": "CRPS0",
+        }, record_id=record_id)
+    except Exception:
+        pass
+
 BASH_BLOCKS = [
     (r"\bsqlite3\b",
      "Direct SQLite access is not allowed. Use MCP: store_get / store_list, or Read for schema inspection."),
@@ -247,12 +272,16 @@ def main():
     # Safety gate — runs before all other checks
     block = _run_safety_gate(tool_name, tool_input, session_id)
     if block:
+        try:
+            reason = json.loads(block).get("reason", block)[:300]
+        except Exception:
+            reason = block[:300]
         if _LEDGER_AVAILABLE:
             try:
-                reason = json.loads(block).get("reason", block)[:300]
                 _ledger_block(tool_name, reason, session_id=session_id)
             except Exception:
                 pass
+        _corpus_log_block(tool_name, reason, session_id)
         print(block)
         sys.exit(0)
 
@@ -285,6 +314,7 @@ def main():
                     _ledger_block("Bash", reason[:300], session_id=session_id)
                 except Exception:
                     pass
+            _corpus_log_block("Bash", reason, session_id)
             print(json.dumps({"decision": "block", "reason": reason}))
             sys.exit(0)
         # Security scan — exfiltration, credential theft, destructive, obfuscation
@@ -322,6 +352,7 @@ def main():
         if tool_name in F5_PROSE_TOOLS:
             f5 = check_f5_canon(tool_name, tool_input)
             if f5:
+                _corpus_log_block(tool_name, f5, session_id)
                 print(json.dumps({"decision": "block", "reason": f5}))
         sys.exit(0)
 
