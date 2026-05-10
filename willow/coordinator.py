@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 willow/coordinator.py — Willow local coordinator.
+b17: 0BF5F  ΔΣ=42
 Watches Grove, routes tasks, feeds Kart. Runs on yggdrasil:v9.
 
 Run: python3 -m willow.coordinator
 Env:
-  WILLOW_COORDINATOR_API_URL       (default: http://localhost:11434/v1/chat/completions)
-  WILLOW_COORDINATOR_MODEL         (default: yggdrasil:v9)
-  WILLOW_COORDINATOR_SILENCE_SECS  (default: 600 — 10 minutes)
+  WILLOW_COORDINATOR_API_URL        (default: http://localhost:11434/v1/chat/completions)
+  WILLOW_COORDINATOR_MODEL          (default: yggdrasil:v9)
+  WILLOW_COORDINATOR_SILENCE_SECS   (default: 600 — 10 minutes)
   WILLOW_COORDINATOR_HEARTBEAT_SECS (default: 300 — 5 minutes)
+  WILLOW_COORDINATOR_JSONL_SCAN_SECS (default: 120 — 2 minutes)
   WILLOW_PG_DB  WILLOW_PG_USER
 """
 import json
@@ -39,10 +41,14 @@ COORDINATOR_SENDER = "willow"
 FLEET_SENDERS      = frozenset({"hanuman", "heimdallr", "vishwakarma", "loki"})
 SEAN_SENDER        = "sean-campbell"
 
-API_URL        = os.environ.get("WILLOW_COORDINATOR_API_URL",        "http://localhost:11434/api/chat")
-MODEL          = os.environ.get("WILLOW_COORDINATOR_MODEL",          "yggdrasil:v9")
-SILENCE_SECS   = int(os.environ.get("WILLOW_COORDINATOR_SILENCE_SECS",    "600"))
-HEARTBEAT_SECS = int(os.environ.get("WILLOW_COORDINATOR_HEARTBEAT_SECS",  "300"))
+API_URL          = os.environ.get("WILLOW_COORDINATOR_API_URL",         "http://localhost:11434/api/chat")
+MODEL            = os.environ.get("WILLOW_COORDINATOR_MODEL",           "yggdrasil:v9")
+SILENCE_SECS     = int(os.environ.get("WILLOW_COORDINATOR_SILENCE_SECS",     "600"))
+HEARTBEAT_SECS   = int(os.environ.get("WILLOW_COORDINATOR_HEARTBEAT_SECS",   "300"))
+JSONL_SCAN_SECS  = int(os.environ.get("WILLOW_COORDINATOR_JSONL_SCAN_SECS",  "120"))
+
+PROJECTS_DIR     = Path.home() / ".claude" / "projects"
+FLEET_STATE_FILE = Path("/tmp/willow-fleet-jsonl.json")
 
 _BLOCKED_KEYWORDS = frozenset({"blocked", "waiting", "unclear", "stuck", "need"})
 
@@ -181,6 +187,147 @@ def _kb_context(limit: int = 8) -> str:
         return ""
 
 
+# ── JSONL fleet scan ─────────────────────────────────────────────────────────
+
+def _find_recent_jsonls(max_age_secs: int = 7200) -> list:
+    """Find session JSONL files modified within max_age_secs. Skips subagent files."""
+    cutoff = time.time() - max_age_secs
+    result = []
+    try:
+        for p in PROJECTS_DIR.rglob("*.jsonl"):
+            if "/subagents/" in str(p):
+                continue
+            try:
+                if p.stat().st_mtime > cutoff:
+                    result.append(p)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return sorted(result, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def _parse_jsonl_tail(path: Path, n: int = 20) -> dict:
+    """Parse last N lines of a JSONL. Returns agent state dict."""
+    state: dict = {
+        "path": str(path),
+        "agent": "",
+        "last_user_msg": "",
+        "last_assistant_msg": "",
+        "tool_errors": [],
+        "active": False,
+        "age_secs": 0,
+    }
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        lines = text.splitlines()
+        tail = lines[-n:] if len(lines) >= n else lines
+
+        for line in reversed(tail):
+            try:
+                entry = json.loads(line)
+                role    = entry.get("role", "")
+                content = entry.get("message", {}).get("content", "")
+
+                if role == "user" and not state["last_user_msg"]:
+                    if isinstance(content, str) and content.strip():
+                        state["last_user_msg"] = content.strip()[:200]
+                    elif isinstance(content, list):
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            if block.get("type") == "tool_result":
+                                inner = block.get("content", "")
+                                if isinstance(inner, list):
+                                    for ib in inner:
+                                        if isinstance(ib, dict):
+                                            txt = ib.get("text", "")
+                                            if "error" in txt.lower():
+                                                state["tool_errors"].append(txt[:120])
+                            elif block.get("type") == "text":
+                                txt = block.get("text", "").strip()
+                                if txt and not state["last_user_msg"]:
+                                    state["last_user_msg"] = txt[:200]
+
+                if role == "assistant" and not state["last_assistant_msg"]:
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                txt = block.get("text", "").strip()
+                                if txt:
+                                    state["last_assistant_msg"] = txt[:200]
+                                    break
+                    elif isinstance(content, str) and content.strip():
+                        state["last_assistant_msg"] = content.strip()[:200]
+
+            except Exception:
+                continue
+
+        # Infer agent from path segments
+        path_str = str(path)
+        for agent in FLEET_SENDERS:
+            if f"-{agent}" in path_str or f"/{agent}" in path_str:
+                state["agent"] = agent
+                break
+
+        mtime = path.stat().st_mtime
+        state["age_secs"] = int(time.time() - mtime)
+        state["active"]   = state["age_secs"] < 300
+
+    except Exception:
+        pass
+    return state
+
+
+def _scan_fleet_jsonls() -> list:
+    """Scan recent agent JSOLs and return list of state dicts."""
+    paths  = _find_recent_jsonls(max_age_secs=7200)
+    states = [_parse_jsonl_tail(p, n=20) for p in paths[:12]]
+    # Deduplicate by agent — keep most recent per agent
+    seen: dict = {}
+    deduped = []
+    for s in states:
+        agent = s.get("agent") or s["path"]
+        if agent not in seen:
+            seen[agent] = True
+            deduped.append(s)
+    return deduped
+
+
+def _write_fleet_state(states: list) -> None:
+    """Write fleet state to temp file for dashboard / Loki consumption."""
+    try:
+        FLEET_STATE_FILE.write_text(json.dumps({
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
+            "agents": states,
+        }, indent=2))
+    except Exception:
+        pass
+
+
+def _detect_jsonl_signals(states: list) -> list:
+    """
+    Return [(Signal, synthetic_msg)] for fleet states worth acting on.
+    Only fires on agents that are active (modified < 5min) with tool errors
+    and haven't already posted a block signal to Grove recently.
+    """
+    signals = []
+    for s in states:
+        agent  = s.get("agent", "")
+        errors = s.get("tool_errors", [])
+        if agent and errors and s.get("active"):
+            content = (
+                f"[jsonl-scan] {agent} hitting tool errors (not reported to Grove): "
+                f"{errors[0]}"
+            )
+            signals.append((Signal.FLEET_BLOCKED, {
+                "sender":  agent,
+                "channel": "general",
+                "content": content,
+            }))
+    return signals
+
+
 # ── LLM call ──────────────────────────────────────────────────────────────────
 _SYSTEM_PROMPT = (
     "You are Willow, the local coordinator for a multi-agent AI fleet. "
@@ -285,11 +432,24 @@ def _handle_silence_feed(pending: int) -> None:
 
 def _heartbeat(signal_counts: dict, last_signal: Optional[str]) -> None:
     """Post HEARTBEAT to #willow channel. Dashboard picks it up via grove_agents()."""
+    fleet_summary: list = []
+    try:
+        if FLEET_STATE_FILE.exists():
+            data = json.loads(FLEET_STATE_FILE.read_text())
+            fleet_summary = [
+                {"agent": s.get("agent", "?"), "active": s.get("active"), "age_secs": s.get("age_secs", 0)}
+                for s in data.get("agents", [])
+                if s.get("agent")
+            ]
+    except Exception:
+        pass
+
     payload = json.dumps({
         "type":          "HEARTBEAT",
         "model":         MODEL,
         "signal_counts": signal_counts,
         "last_signal":   last_signal,
+        "fleet":         fleet_summary,
         "ts":            datetime.now(timezone.utc).isoformat(),
     })
     _grove_post(payload, "willow")
@@ -301,6 +461,7 @@ def run() -> None:
 
     last_fleet_activity: float = time.time()
     last_heartbeat:      float = time.time()
+    last_jsonl_scan:     float = 0  # scan immediately on first loop
     last_signal_name:    Optional[str] = None
     signal_counts:       dict  = {s.value: 0 for s in Signal}
 
@@ -323,6 +484,20 @@ def run() -> None:
         if now - last_heartbeat >= HEARTBEAT_SECS:
             _heartbeat(signal_counts, last_signal_name)
             last_heartbeat = now
+
+        # JSONL fleet scan — reads agent session files directly, independent of Grove posts
+        if now - last_jsonl_scan >= JSONL_SCAN_SECS:
+            fleet_states = _scan_fleet_jsonls()
+            _write_fleet_state(fleet_states)
+            for signal, synthetic_msg in _detect_jsonl_signals(fleet_states):
+                log.info(
+                    "JSONL signal %s: %s",
+                    signal.value, synthetic_msg.get("content", "")[:80],
+                )
+                signal_counts[signal.value] += 1
+                last_signal_name = signal.value
+                _handle(signal, synthetic_msg)
+            last_jsonl_scan = now
 
         # Silence feed (fleet clock only — coordinator heartbeat does NOT reset this)
         if now - last_fleet_activity >= SILENCE_SECS:
