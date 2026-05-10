@@ -352,10 +352,20 @@ def _run_silent_startup() -> dict:
     elif result["top_flags"]:
         result["handoff_summary"] = "Open: " + "; ".join(result["top_flags"])
 
-    # 6. Corpus identity — seed + corrections + preferences
+    # 6. Corpus identity — seed + corrections + preferences (direct SOIL read)
     try:
-        from willow.corpus.sandbox import load_context as _corpus_load
-        result["corpus"] = _corpus_load(AGENT)
+        from core.willow_store import WillowStore as _WS
+        _store = _WS()
+        _seed_rec = _store.get("corpus/seed", "seed") or {}
+        _corrs = _store.all("corpus/corrections") or []
+        _prefs = _store.all("corpus/preferences") or []
+        _corrs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        _prefs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        result["corpus"] = {
+            "seed": _seed_rec.get("content", ""),
+            "corrections": [r.get("content", "") for r in _corrs[:10] if r.get("content")],
+            "preferences": [r.get("content", "") for r in _prefs[:10] if r.get("content")],
+        }
     except Exception:
         result["corpus"] = {"seed": "", "preferences": [], "corrections": []}
 
