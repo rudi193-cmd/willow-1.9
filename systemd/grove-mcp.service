@@ -8,6 +8,9 @@ Type=simple
 Environment=WILLOW_PG_DB=willow_19
 Environment=WILLOW_PG_USER=%u
 Environment=GROVE_MCP_PORT=8765
+# Set GROVE_MCP_URL to your tunnel URL if exposing Grove externally (e.g. ngrok, Cloudflare Tunnel).
+# Example: Environment=GROVE_MCP_URL=https://your-tunnel.ngrok-free.app
+# Override per-user via a drop-in: systemctl --user edit grove-mcp
 Environment=PYTHONPATH=%h/github/safe-app-willow-grove
 ExecStart=/usr/bin/python3 -m grove.mcp_local --serve
 WorkingDirectory=%h/github/safe-app-willow-grove
