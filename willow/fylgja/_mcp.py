@@ -104,37 +104,81 @@ def _dispatch_store(tool_name: str, arguments: dict):
 
 
 # ---------------------------------------------------------------------------
-# Direct grove dispatch
+# Direct grove dispatch — raw psycopg2 to grove.* schema
 # ---------------------------------------------------------------------------
+
+def _grove_connect():
+    import psycopg2
+    db = os.environ.get("WILLOW_PG_DB", "willow_19")
+    user = os.environ.get("WILLOW_PG_USER", os.environ.get("USER", ""))
+    conn = psycopg2.connect(dbname=db, user=user)
+    conn.autocommit = True
+    return conn
+
 
 def _dispatch_grove(tool_name: str, arguments: dict):
     try:
-        import sys
-        if str(_REPO_ROOT) not in sys.path:
-            sys.path.insert(0, str(_REPO_ROOT))
-        from core.grove_client import GroveClient
-        gc = GroveClient()
+        conn = _grove_connect()
+        cur = conn.cursor()
 
         if tool_name == "grove_send_message":
-            return gc.send_message(
-                channel=arguments.get("channel", arguments.get("channel_name", "")),
-                sender=arguments.get("sender", ""),
-                content=arguments.get("content", ""),
+            channel = arguments.get("channel_name", arguments.get("channel", ""))
+            cur.execute("SELECT id FROM grove.channels WHERE name=%s LIMIT 1", (channel,))
+            row = cur.fetchone()
+            if not row:
+                return {"error": f"channel not found: {channel}"}
+            cur.execute(
+                "INSERT INTO grove.messages (channel_id, sender, content) VALUES (%s, %s, %s) RETURNING id",
+                (row[0], arguments.get("sender", ""), arguments.get("content", "")),
             )
-        if tool_name == "grove_get_history":
-            return gc.get_history(
-                channel=arguments.get("channel", arguments.get("channel_name", "")),
-                limit=arguments.get("limit", 50),
-                since_id=arguments.get("since_id", 0),
-            )
-        if tool_name == "grove_heartbeat":
-            return gc.heartbeat(sender=arguments.get("sender", ""))
+            msg_id = cur.fetchone()[0]
+            conn.close()
+            return {"id": msg_id, "ok": True}
+
         if tool_name == "grove_reply":
-            return gc.reply(
-                parent_id=arguments.get("parent_id", 0),
-                sender=arguments.get("sender", ""),
-                content=arguments.get("content", ""),
+            cur.execute("SELECT channel_id FROM grove.messages WHERE id=%s LIMIT 1",
+                        (arguments.get("parent_id", 0),))
+            row = cur.fetchone()
+            if not row:
+                return {"error": "parent message not found"}
+            cur.execute(
+                "INSERT INTO grove.messages (channel_id, sender, content, parent_id) VALUES (%s, %s, %s, %s) RETURNING id",
+                (row[0], arguments.get("sender", ""), arguments.get("content", ""), arguments.get("parent_id")),
             )
+            msg_id = cur.fetchone()[0]
+            conn.close()
+            return {"id": msg_id, "ok": True}
+
+        if tool_name == "grove_get_history":
+            channel = arguments.get("channel_name", arguments.get("channel", ""))
+            cur.execute("SELECT id FROM grove.channels WHERE name=%s LIMIT 1", (channel,))
+            row = cur.fetchone()
+            if not row:
+                return {"result": []}
+            since_id = arguments.get("since_id", 0)
+            limit = min(arguments.get("limit", 50), 200)
+            cur.execute(
+                "SELECT id, sender, content, created_at FROM grove.messages "
+                "WHERE channel_id=%s AND id>%s AND is_deleted=0 ORDER BY id ASC LIMIT %s",
+                (row[0], since_id, limit),
+            )
+            rows = cur.fetchall()
+            conn.close()
+            return {"result": [{"id": r[0], "sender": r[1], "content": r[2],
+                                 "created_at": str(r[3])} for r in rows]}
+
+        if tool_name == "grove_heartbeat":
+            cur.execute("SELECT id FROM grove.channels WHERE name='heartbeat' LIMIT 1")
+            row = cur.fetchone()
+            if row:
+                cur.execute(
+                    "INSERT INTO grove.messages (channel_id, sender, content) VALUES (%s, %s, %s)",
+                    (row[0], arguments.get("sender", ""), "♥"),
+                )
+            conn.close()
+            return {"ok": True}
+
+        conn.close()
     except Exception as e:
         return {"error": f"grove dispatch error: {e}"}
     return {"error": f"unknown grove tool: {tool_name}"}
