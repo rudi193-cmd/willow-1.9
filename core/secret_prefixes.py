@@ -4,11 +4,19 @@
 # b17: SECPFX  ΔΣ=42
 
 SECRET_PREFIXES: dict[str, str] = {
-    "sk-ant-":  "anthropic_api_key",
-    "gsk_":     "groq_api_key",
-    "csk-":     "cerebras_api_key",
-    "AIzaSy":   "gemini_api_key",
-    "sk_sn-":   "sambanova_api_key",
+    "sk-ant-":       "anthropic_api_key",
+    "gsk_":          "groq_api_key",
+    "csk-":          "cerebras_api_key",
+    "AIzaSy":        "gemini_api_key",
+    "sk_sn-":        "sambanova_api_key",
+    # More-specific prefixes must come before less-specific ones (sk-proj- before sk-)
+    "sk-proj-":      "openai_project_key",
+    "sk-":           "openai_api_key",
+    "AKIA":          "aws_access_key",
+    "ghp_":          "github_pat",
+    "github_pat_":   "github_fine_grained_pat",
+    "hf_":           "huggingface_token",
+    "xai-":          "xai_api_key",
 }
 
 

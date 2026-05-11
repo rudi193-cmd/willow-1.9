@@ -43,7 +43,7 @@ This PR is the tracking doc. No patches here — patches go in separate PRs.
 | R11 | Race conditions / missing locks | ✅ PASS | `pg_bridge.py` and `sqlite_bridge.py` use connection pools with thread-safe locking. |
 | R12 | `safe_integration.py` status() correctness | ✅ N/A | Platform repo, not a safe-app. |
 | R13 | Entry point in manifest is importable | ✅ PASS | `root.py` is importable. Entry functions `setup_*()` callable. |
-| R14 | `requirements.txt` with pinned deps | ✅ FIXED | `psycopg2-binary==2.9.9`, `mcp==1.6.0`, others pinned to exact versions. |
+| R14 | `requirements.txt` with pinned deps | ⚠️ OPEN | Uses `>=` lower bounds only (e.g. `psycopg2-binary>=2.9.0`). No upper bounds, no lock file. `pip install` pulls latest. Use `pip-compile` or `uv` to generate a pinned lock file. |
 | R15 | No hardcoded developer home paths | ✅ PASS | `root.py` line 277 uses `_windows_username()` var; line 287 uses `USER` env var. Not hardcoded. |
 
 ---

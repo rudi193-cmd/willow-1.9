@@ -2,13 +2,14 @@
 """
 grove_serve.py — Willow Grove command server. b17: GRSV1 ΔΣ=42
 
-Listens on LAN for signed command requests from trusted Willow nodes.
+Listens for signed command requests from trusted Willow nodes.
 No third-party services. No Discord. Just your network.
 
 Usage:
-    python3 -m core.grove_serve [--port 7777] [--host 0.0.0.0]
+    python3 -m core.grove_serve [--port 7777] [--host 127.0.0.1]
 
-Auth: HMAC-SHA256 of the request body, signed with the shared grove token.
+Auth: HMAC-SHA256 of the request body (including nonce + timestamp), signed
+with the shared grove token. Requests older than 60s are rejected.
 Token lives at ~/.willow/grove_token (generated on first run, share with
 trusted nodes via `willow grove pair`).
 """
@@ -21,6 +22,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Ensure willow-1.9 root is on path when invoked via -m
@@ -30,9 +32,10 @@ if str(_ROOT) not in sys.path:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-DEFAULT_PORT = int(os.environ.get("WILLOW_GROVE_PORT", "7777"))
-WILLOW_ROOT  = Path(os.environ.get("WILLOW_ROOT", Path(__file__).parent.parent))
-TOKEN_PATH   = Path.home() / ".willow" / "grove_token"
+DEFAULT_PORT   = int(os.environ.get("WILLOW_GROVE_PORT", "7777"))
+WILLOW_ROOT    = Path(os.environ.get("WILLOW_ROOT", Path(__file__).parent.parent))
+TOKEN_PATH     = Path.home() / ".willow" / "grove_token"
+_MAX_SKEW_SECS = 60  # reject requests with timestamp older than this
 
 # Commands the serve endpoint will run. Allowlist — nothing else executes.
 ALLOWED_COMMANDS = {
@@ -58,8 +61,7 @@ def load_or_create_token() -> str:
     TOKEN_PATH.write_text(token + "\n")
     TOKEN_PATH.chmod(0o600)
     print(f"[grove-serve] Generated grove token → {TOKEN_PATH}", flush=True)
-    print(f"[grove-serve] Share this token with trusted nodes:", flush=True)
-    print(f"  {token}", flush=True)
+    print(f"[grove-serve] Share via: cat {TOKEN_PATH}", flush=True)
     return token
 
 
@@ -69,6 +71,22 @@ _TOKEN: str = ""
 def _valid_sig(body: bytes, sig: str) -> bool:
     expected = hmac.new(_TOKEN.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, sig)
+
+
+def _check_replay(payload: dict) -> str | None:
+    """Return an error string if the request is a replay, else None."""
+    ts = payload.get("ts")
+    if ts is None:
+        return "missing timestamp"
+    try:
+        age = abs(time.time() - float(ts))
+    except (TypeError, ValueError):
+        return "invalid timestamp"
+    if age > _MAX_SKEW_SECS:
+        return f"request too old ({age:.0f}s > {_MAX_SKEW_SECS}s)"
+    if not payload.get("nonce"):
+        return "missing nonce"
+    return None
 
 
 def _run_command(cmd: str) -> tuple[str, int]:
@@ -135,6 +153,11 @@ class GroveHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid JSON"})
             return
 
+        replay_err = _check_replay(payload)
+        if replay_err:
+            self._send_json(400, {"error": f"replay check failed: {replay_err}"})
+            return
+
         if not cmd:
             self._send_json(400, {"error": "cmd is required"})
             return
@@ -143,13 +166,13 @@ class GroveHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"output": output, "exit_code": exit_code, "cmd": cmd})
 
 
-def serve(host: str = "0.0.0.0", port: int = DEFAULT_PORT) -> None:
+def serve(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> None:
     global _TOKEN
     _TOKEN = load_or_create_token()
 
     server = http.server.HTTPServer((host, port), GroveHandler)
     print(f"[grove-serve] Listening on {host}:{port}", flush=True)
-    print(f"[grove-serve] Token: {TOKEN_PATH}", flush=True)
+    print(f"[grove-serve] Token path: {TOKEN_PATH}", flush=True)
     print(f"[grove-serve] Allowed commands: {sorted(ALLOWED_COMMANDS)}", flush=True)
     try:
         server.serve_forever()
@@ -161,6 +184,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Willow Grove command server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Bind address (default 127.0.0.1; use 0.0.0.0 for LAN with --lan flag)")
     args = parser.parse_args()
     serve(args.host, args.port)

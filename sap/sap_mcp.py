@@ -176,7 +176,8 @@ def _startup_backfill_check() -> None:
                 _cur.execute("SELECT 1 FROM public.tasks WHERE task LIKE '%willow_embed_backfill%' AND status IN ('pending','running') LIMIT 1")
                 _existing = _cur.fetchone()
             if not _existing:
-                _pb.submit_task("python3 /home/sean-campbell/github/willow-1.9/scripts/willow_embed_backfill.py", submitted_by="sap_startup", agent="kart")
+                _backfill_script = Path(__file__).resolve().parents[1] / "scripts" / "willow_embed_backfill.py"
+                _pb.submit_task(f"python3 {_backfill_script}", submitted_by="sap_startup", agent="kart")
                 print(f"[startup] {total_null} rows with NULL embedding — backfill task queued", file=sys.stderr)
             else:
                 print(f"[startup] {total_null} rows with NULL embedding — backfill already queued", file=sys.stderr)
@@ -228,6 +229,21 @@ _ONBOARDING = (Path(__file__).parent / "ONBOARDING.md").read_text(encoding="utf-
 server = Server("willow-store", instructions=_ONBOARDING)
 
 _GAPS_LOG = Path(__file__).parent / "log" / "gaps.jsonl"
+
+
+def _sanitize_write_input(data, source_label: str) -> str | None:
+    """Scan write-path input for high-severity injection. Returns error string or None."""
+    try:
+        flags = scan_struct(data)
+        if not flags:
+            return None
+        _sanitizer_log(flags, source=source_label, log_path=_GAPS_LOG)
+        high = [f for f in flags if f.get("severity") in ("high", "critical")]
+        if high:
+            return f"write blocked: prompt injection detected ({len(high)} high-severity flag(s))"
+    except Exception:
+        pass
+    return None
 
 
 def _sanitize_result(result, source_label: str):
@@ -1088,6 +1104,8 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
         # but they still go through sap_permitted() for per-tool access control.
         # TODO: create SAFE manifests for infra agents and remove this bypass entirely.
         if _SAP_GATE:
+            if app_id in _INFRA_IDS:
+                print(f"[sap] INFRA bypass: app_id={app_id!r} tool={name!r} — PGP gate skipped (no manifest)", file=sys.stderr, flush=True)
             if app_id not in _INFRA_IDS and not sap_authorized(app_id):
                 return [types.TextContent(type="text", text=json.dumps({
                     "error": "unauthorized",
@@ -1105,30 +1123,34 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             col = arguments["collection"]
             rec = arguments["record"]
             dev = arguments.get("deviation", 0.0)
-            rid, action, proposals = store.put(
-                col,
-                rec,
-                record_id=arguments.get("record_id"),
-                deviation=dev,
-            )
-            result = {"id": rid, "action": action}
-            if proposals:
-                result["proposals"] = [p.to_dict() for p in proposals]
-            # Auto-flag qualifying records into {namespace}/flags
-            namespace = col.split("/")[0]
-            if not col.endswith("/flags") and _qualifies_as_flag(rec, dev):
-                store.put(f"{namespace}/flags", {
-                    "atom_id": rid,
-                    "collection": col,
-                    "flag_state": "open",
-                    "title": rec.get("title", rec.get("b17", rid)),
-                    "severity": rec.get("severity", "medium"),
-                    "b17": rec.get("b17") or f"FLAG-{rid[:8]}",
-                    "created": datetime.now().isoformat(),
-                    "acknowledged": None,
-                    "resolved": None,
-                    "resolution": None,
-                })
+            _write_err = _sanitize_write_input(rec, f"store_put:{col}")
+            if _write_err:
+                result = {"error": _write_err}
+            else:
+                rid, action, proposals = store.put(
+                    col,
+                    rec,
+                    record_id=arguments.get("record_id"),
+                    deviation=dev,
+                )
+                result = {"id": rid, "action": action}
+                if proposals:
+                    result["proposals"] = [p.to_dict() for p in proposals]
+                # Auto-flag qualifying records into {namespace}/flags
+                namespace = col.split("/")[0]
+                if not col.endswith("/flags") and _qualifies_as_flag(rec, dev):
+                    store.put(f"{namespace}/flags", {
+                        "atom_id": rid,
+                        "collection": col,
+                        "flag_state": "open",
+                        "title": rec.get("title", rec.get("b17", rid)),
+                        "severity": rec.get("severity", "medium"),
+                        "b17": rec.get("b17") or f"FLAG-{rid[:8]}",
+                        "created": datetime.now().isoformat(),
+                        "acknowledged": None,
+                        "resolved": None,
+                        "resolution": None,
+                    })
 
         elif name == "store_get":
             result = store.get(arguments["collection"], arguments["record_id"])
@@ -1232,19 +1254,24 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
             if not pg:
                 result = {"error": "not_available", "reason": "Postgres not connected"}
             else:
-                atom_id = pg.ingest_atom(
-                    title=arguments["title"],
-                    summary=arguments["summary"],
-                    source_type=arguments.get("source_type", "mcp"),
-                    source_id=arguments.get("source_id", ""),
-                    category=arguments.get("category", "general"),
-                    domain=arguments.get("domain"),
-                )
-                result = {
-                    "id": atom_id,
-                    "status": "ingested" if atom_id else "failed",
-                    "error": getattr(pg, "_last_ingest_error", None) if not atom_id else None,
-                }
+                _ingest_payload = {"title": arguments["title"], "summary": arguments["summary"]}
+                _write_err = _sanitize_write_input(_ingest_payload, "willow_knowledge_ingest")
+                if _write_err:
+                    result = {"error": _write_err}
+                else:
+                    atom_id = pg.ingest_atom(
+                        title=arguments["title"],
+                        summary=arguments["summary"],
+                        source_type=arguments.get("source_type", "mcp"),
+                        source_id=arguments.get("source_id", ""),
+                        category=arguments.get("category", "general"),
+                        domain=arguments.get("domain"),
+                    )
+                    result = {
+                        "id": atom_id,
+                        "status": "ingested" if atom_id else "failed",
+                        "error": getattr(pg, "_last_ingest_error", None) if not atom_id else None,
+                    }
 
         elif name == "willow_knowledge_at":
             if not pg:

@@ -35,7 +35,12 @@ LOG_DIR = Path(__file__).parent.parent / "log"
 
 # Dev fallback: search $WILLOW_DEV_SAFE_ROOT/safe-app-<app_id>/ when SAFE_ROOT lacks the folder.
 # PGP is skipped for dev paths — logged as dev_access_granted, not access_granted.
+# WARNING: if this var is set in a production shell environment, it silently disables PGP verification.
+# Unset it in prod launch scripts: unset WILLOW_DEV_SAFE_ROOT
 _DEV_SAFE_ROOT = Path(os.environ["WILLOW_DEV_SAFE_ROOT"]) if os.environ.get("WILLOW_DEV_SAFE_ROOT") else None
+if _DEV_SAFE_ROOT is not None:
+    import sys as _sys
+    print(f"[gate] WARNING: WILLOW_DEV_SAFE_ROOT is set ({_DEV_SAFE_ROOT}) — PGP gate disabled for dev manifests. Unset in production.", file=_sys.stderr, flush=True)
 
 _EXPECTED_FP = os.environ.get(
     "WILLOW_PGP_FINGERPRINT",

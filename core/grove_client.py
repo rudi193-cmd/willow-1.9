@@ -12,10 +12,14 @@ Examples:
 """
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
+import secrets
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -38,12 +42,39 @@ def sign(body: bytes, token: str) -> str:
     return hmac.new(token.encode(), body, hashlib.sha256).hexdigest()
 
 
+_RFC1918 = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+]
+
+
+def _assert_lan_host(host_port: str) -> None:
+    """Reject non-LAN hosts to prevent SSRF via CLI argument."""
+    raw = host_port.replace("http://", "").replace("https://", "").split("/")[0]
+    hostname = raw.split(":")[0]
+    try:
+        addr = ipaddress.ip_address(hostname)
+    except ValueError:
+        if hostname not in ("localhost",):
+            raise ValueError(
+                f"grove_client: non-IP host '{hostname}' rejected — only LAN IPs and localhost are allowed."
+            )
+        return
+    if not any(addr in net for net in _RFC1918):
+        raise ValueError(
+            f"grove_client: host '{hostname}' is not a LAN address — refusing to send signed payload."
+        )
+
+
 def send_command(host_port: str, cmd: str, token: str, timeout: int = 30) -> dict:
+    _assert_lan_host(host_port)
     if not host_port.startswith("http"):
         host_port = f"http://{host_port}"
     url = f"{host_port.rstrip('/')}/command"
 
-    payload = json.dumps({"cmd": cmd}).encode()
+    payload = json.dumps({"cmd": cmd, "ts": time.time(), "nonce": secrets.token_hex(8)}).encode()
     sig = sign(payload, token)
 
     req = urllib.request.Request(

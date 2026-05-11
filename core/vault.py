@@ -82,7 +82,13 @@ class Vault:
 def default_vault() -> Vault:
     """Return a Vault instance pointing at ~/.willow/vault.db, initialized."""
     v = Vault()
-    if (Path.home() / ".willow" / "vault.db").exists():
-        return v
-    v.init()
+    db_exists  = (Path.home() / ".willow" / "vault.db").exists()
+    key_exists = (Path.home() / ".willow" / "vault.key").exists()
+    if db_exists and not key_exists:
+        raise FileNotFoundError(
+            f"Vault database exists but key file is missing: {v._key_path}\n"
+            "Restore the key from backup or delete the vault and re-initialize."
+        )
+    if not db_exists:
+        v.init()
     return v
