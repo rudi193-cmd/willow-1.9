@@ -243,6 +243,15 @@ def _check_ollama() -> dict:
         return {"running": False}
 
 
+def _qualifies_as_flag(record: dict, deviation: float) -> bool:
+    return (
+        record.get("type") in ("failure-log",) or
+        record.get("domain") == "governance" or
+        deviation > 0.6 or
+        (record.get("type") == "gap" and record.get("severity") in ("high", "critical"))
+    )
+
+
 def _hot_reload(target: str = "all") -> dict:
     global pg, store, _inf, _blast
     import importlib
@@ -438,6 +447,183 @@ async def fleet_restart(app_id: str) -> dict:
         os._exit(0)
     threading.Thread(target=_delayed_exit, daemon=True).start()
     return {"status": "restarting", "note": "SAP MCP process exiting. Claude Code will reconnect automatically."}
+
+
+# ── Tools — soil_ domain (SOIL store reads + writes) ─────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_get(app_id: str, collection: str, record_id: str) -> dict:
+    """Read a single record by ID from a SOIL collection.
+    Returns the record object or {error: not_found}."""
+    logger.info("[w2] soil_get app_id=%s col=%s id=%s", app_id, collection, record_id)
+    loop   = asyncio.get_running_loop()
+    result = await loop.run_in_executor(_executor, store.get, collection, record_id)
+    if result is None:
+        return {"error": "not_found"}
+    return result
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_search(
+    app_id:     str,
+    collection: str,
+    query:      str,
+    after:      str  = "",
+    semantic:   bool = False,
+) -> list:
+    """Full-text search within a single SOIL collection. Multi-keyword queries are ANDed.
+    Prefer kb_search for the Postgres knowledge base."""
+    logger.info("[w2] soil_search app_id=%s col=%s q=%r", app_id, collection, query)
+    loop = asyncio.get_running_loop()
+    if semantic:
+        result = await loop.run_in_executor(_executor, store.search_semantic, collection, query)
+    else:
+        result = await loop.run_in_executor(
+            _executor, store.search, collection, query, after or None
+        )
+    return result
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_search_all(app_id: str, query: str) -> dict:
+    """Search across ALL SOIL collections simultaneously.
+    Use when you don't know which collection holds the answer."""
+    logger.info("[w2] soil_search_all app_id=%s q=%r", app_id, query)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, store.search_all, query)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_list(app_id: str, collection: str) -> list:
+    """Return every record in a SOIL collection.
+    Use soil_search for large collections — soil_list returns everything."""
+    logger.info("[w2] soil_list app_id=%s col=%s", app_id, collection)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, store.all, collection)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_edges_for(app_id: str, record_id: str) -> list:
+    """Return all graph edges where the given SOIL record is either source or target."""
+    logger.info("[w2] soil_edges_for app_id=%s id=%s", app_id, record_id)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, store.edges_for, record_id)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_stats(app_id: str) -> dict:
+    """Return record counts and trajectory scores for every SOIL collection."""
+    logger.info("[w2] soil_stats app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, store.stats)
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def soil_put(
+    app_id:     str,
+    collection: str,
+    record:     dict,
+    record_id:  str  = "",
+    deviation:  float = 0.0,
+) -> dict:
+    """Write a record to a SOIL collection. Append-only.
+    Returns {id, action} where action is work_quiet/flag/stop from the angular deviation rubric."""
+    logger.info("[w2] soil_put app_id=%s col=%s dev=%.3f", app_id, collection, deviation)
+    loop = asyncio.get_running_loop()
+
+    def _put():
+        rid, action, proposals = store.put(
+            collection, record,
+            record_id=record_id or None,
+            deviation=deviation,
+        )
+        out: dict = {"id": rid, "action": action}
+        if proposals:
+            out["proposals"] = [p.to_dict() for p in proposals]
+        # Auto-flag qualifying records into {namespace}/flags
+        namespace = collection.split("/")[0]
+        if not collection.endswith("/flags") and _qualifies_as_flag(record, deviation):
+            store.put(f"{namespace}/flags", {
+                "atom_id":    rid,
+                "collection": collection,
+                "deviation":  deviation,
+                "ts":         __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            })
+        return out
+
+    return await loop.run_in_executor(_executor, _put)
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def soil_update(
+    app_id:     str,
+    collection: str,
+    record_id:  str,
+    record:     dict,
+    deviation:  float = 0.0,
+) -> dict:
+    """Update an existing SOIL record in-place. Every update is audit-trailed."""
+    logger.info("[w2] soil_update app_id=%s col=%s id=%s", app_id, collection, record_id)
+    loop = asyncio.get_running_loop()
+
+    def _update():
+        rid, action, proposals = store.update(collection, record_id, record, deviation=deviation)
+        out: dict = {"id": rid, "action": action}
+        if proposals:
+            out["proposals"] = [p.to_dict() for p in proposals]
+        return out
+
+    return await loop.run_in_executor(_executor, _update)
+
+
+@mcp.tool(annotations={"destructiveHint": True})
+@sap_gate()
+async def soil_delete(app_id: str, collection: str, record_id: str) -> dict:
+    """Soft-delete a SOIL record — invisible to search/get but retained in the audit trail."""
+    logger.info("[w2] soil_delete app_id=%s col=%s id=%s", app_id, collection, record_id)
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(_executor, store.delete, collection, record_id)
+    return {"deleted": ok}
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def soil_add_edge(
+    app_id:   str,
+    from_id:  str,
+    to_id:    str,
+    relation: str,
+    context:  str = "",
+) -> dict:
+    """Add a directed edge between two SOIL records in the knowledge graph."""
+    logger.info("[w2] soil_add_edge app_id=%s %s→%s rel=%s", app_id, from_id, to_id, relation)
+    loop = asyncio.get_running_loop()
+
+    def _add():
+        rid, action, proposals = store.add_edge(from_id, to_id, relation, context=context)
+        out: dict = {"id": rid, "action": action}
+        if proposals:
+            out["proposals"] = [p.to_dict() for p in proposals]
+        return out
+
+    return await loop.run_in_executor(_executor, _add)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def soil_audit(app_id: str, collection: str, limit: int = 20) -> list:
+    """Read the recent audit log for a SOIL collection — creates, updates, soft-deletes."""
+    logger.info("[w2] soil_audit app_id=%s col=%s", app_id, collection)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, store.audit_log, collection, limit)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
