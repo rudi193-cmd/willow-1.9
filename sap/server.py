@@ -817,6 +817,265 @@ async def kb_at(
     return await loop.run_in_executor(_executor, _at)
 
 
+# ── Tools — agent_ domain (dispatch + task queue) ────────────────────────────
+
+@mcp.tool()
+@sap_gate()
+async def agent_route(app_id: str, message: str, session_id: str = "") -> dict:
+    """Route a message to the most appropriate Willow agent based on content analysis."""
+    logger.info("[w2] agent_route app_id=%s sid=%s", app_id, session_id)
+    loop = asyncio.get_running_loop()
+
+    def _route():
+        import json as _j
+        oracle_ok = False
+        try:
+            from willow.routing.oracle import route as _routing_oracle
+            result = _routing_oracle(message, session_id=session_id) if message else {
+                "routed_to": "willow", "rule_matched": "no-message", "confidence": 0.5, "latency_ms": 0,
+            }
+            oracle_ok = bool(message)
+        except Exception as re:
+            result = {
+                "routed_to": "willow", "rule_matched": "oracle-unavailable",
+                "confidence": 0.5, "latency_ms": 0, "error": str(re),
+            }
+        if pg:
+            try:
+                import hashlib, uuid as _u
+                with pg.conn.cursor() as cur:
+                    if message:
+                        ph  = hashlib.sha256(message.encode()).hexdigest()[:16]
+                        rid = _u.uuid4().hex[:12]
+                        cur.execute(
+                            "INSERT INTO routing_decisions (id, prompt_hash, session_id, decision)"
+                            " VALUES (%s,%s,%s,%s)",
+                            (rid, ph, session_id, _j.dumps(result)),
+                        )
+                    if not oracle_ok:
+                        cur.execute(
+                            "INSERT INTO willow.routing_decisions"
+                            " (session_id, prompt_snippet, routed_to, rule_matched, confidence, latency_ms)"
+                            " VALUES (%s,%s,%s,%s,%s,%s)",
+                            (session_id or "", (message or "")[:500],
+                             result.get("routed_to") or "willow",
+                             result.get("rule_matched") or "—",
+                             float(result.get("confidence") or 0.0),
+                             int(result.get("latency_ms") or 0)),
+                        )
+                pg.conn.commit()
+            except Exception as pe:
+                logger.warning("[w2] agent_route: routing_decisions persist failed: %s", pe)
+        return result
+
+    return await loop.run_in_executor(_executor, _route)
+
+
+@mcp.tool()
+@sap_gate()
+async def agent_dispatch(
+    app_id:     str,
+    to:         str,
+    prompt:     str,
+    context_id: str = "",
+    card_id:    str = "",
+    priority:   str = "normal",
+    reply_to:   str = "",
+    depth:      int = 0,
+) -> dict:
+    """Dispatch a task to a target agent. Posts to #dispatch, creates dispatch_tasks record."""
+    logger.info("[w2] agent_dispatch app_id=%s to=%s depth=%d", app_id, to, depth)
+    loop = asyncio.get_running_loop()
+
+    def _dispatch():
+        import uuid
+        from willow.constants import DISPATCH_MAX_DEPTH, CHANNEL_DISPATCH, CHANNEL_DISPATCH_VIOLATIONS
+        did = uuid.uuid4().hex[:8].upper()
+        if depth > DISPATCH_MAX_DEPTH:
+            try:
+                from sap.core.deliver import grove_send
+                grove_send(CHANNEL_DISPATCH_VIOLATIONS,
+                    f"HARD STOP: depth {depth} > {DISPATCH_MAX_DEPTH}. dispatch_id={did} from={app_id} to={to}",
+                    sender=app_id)
+            except Exception:
+                pass
+            return {"error": "dispatch_depth_exceeded", "dispatch_id": did, "depth": depth}
+        try:
+            with PgBridge() as b:
+                b.conn.cursor().execute(
+                    "INSERT INTO dispatch_tasks"
+                    " (id,to_agent,from_agent,prompt,context_id,card_id,reply_to,depth,status)"
+                    " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')",
+                    (did, to, app_id, prompt, context_id, card_id, reply_to, depth),
+                )
+                b.conn.commit()
+        except Exception:
+            pass
+        try:
+            from sap.core.deliver import grove_send
+            grove_send(CHANNEL_DISPATCH,
+                f"[{did}] {app_id} → {to} (depth={depth}): {prompt[:120]}", sender=app_id)
+        except Exception:
+            pass
+        return {"dispatch_id": did, "to": to, "from": app_id, "depth": depth, "status": "dispatched"}
+
+    return await loop.run_in_executor(_executor, _dispatch)
+
+
+@mcp.tool()
+@sap_gate()
+async def agent_dispatch_result(
+    app_id:      str,
+    dispatch_id: str,
+    result:      str,
+    card_id:     str = "",
+) -> dict:
+    """Record the result of a completed dispatch task. Writes LOAM atom, closes dispatch record."""
+    logger.info("[w2] agent_dispatch_result app_id=%s did=%s", app_id, dispatch_id)
+    loop = asyncio.get_running_loop()
+
+    def _result():
+        atom_id = None
+        try:
+            b = PgBridge()
+            atom_id = b.ingest_knowledge(
+                title=f"Dispatch result: {dispatch_id}",
+                summary=result, source_type="dispatch_result", domain=app_id,
+            )
+            b.conn.close()
+        except Exception:
+            pass
+        try:
+            b2 = PgBridge()
+            with b2.conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE dispatch_tasks SET status='completed',result_atom_id=%s,resolved_at=now()"
+                    " WHERE id=%s",
+                    (atom_id, dispatch_id),
+                )
+            b2.conn.commit()
+            b2.conn.close()
+        except Exception:
+            pass
+        return {"dispatch_id": dispatch_id, "atom_id": atom_id, "status": "completed"}
+
+    return await loop.run_in_executor(_executor, _result)
+
+
+@mcp.tool()
+@sap_gate()
+async def agent_task_submit(
+    app_id:       str,
+    task:         str,
+    agent:        str = "kart",
+    submitted_by: str = "ganesha",
+) -> dict:
+    """Queue a shell command for execution. Pass the full command string.
+    Executes inline and returns stdout/stderr (120s timeout)."""
+    logger.info("[w2] agent_task_submit app_id=%s agent=%s", app_id, agent)
+    loop = asyncio.get_running_loop()
+
+    def _submit():
+        import subprocess, uuid, time, shlex
+        task_id = uuid.uuid4().hex[:8].upper()
+        started = time.time()
+        _rl_log_event("task_submit", ref=task_id)
+        try:
+            proc    = subprocess.run(
+                shlex.split(task), shell=False, capture_output=True, text=True, timeout=120,
+            )
+            elapsed = round(time.time() - started, 2)
+            status  = "completed" if proc.returncode == 0 else "failed"
+            _rl_log_event(f"task_{status}", ref=task_id)
+            return {
+                "task_id":    task_id, "status":     status,
+                "returncode": proc.returncode,
+                "stdout":     proc.stdout.strip()[-2000:] if proc.stdout else "",
+                "stderr":     proc.stderr.strip()[-500:]  if proc.stderr else "",
+                "elapsed_s":  elapsed,
+            }
+        except subprocess.TimeoutExpired:
+            _rl_log_event("task_timeout", ref=task_id)
+            return {"task_id": task_id, "status": "timeout", "error": "exceeded 120s"}
+        except Exception as te:
+            _rl_log_event("task_error", ref=task_id)
+            return {"task_id": task_id, "status": "error", "error": str(te)}
+
+    return await loop.run_in_executor(_executor, _submit)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def agent_task_status(app_id: str, task_id: str) -> dict:
+    """Check status of a submitted task. Tasks execute inline — this is a stub."""
+    return {"error": "not_applicable", "reason": "tasks execute inline — no status to poll"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def agent_task_list(app_id: str, agent: str = "kart", limit: int = 10) -> dict:
+    """List pending tasks in the Postgres task queue."""
+    logger.info("[w2] agent_task_list app_id=%s agent=%s", app_id, agent)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    tasks = await loop.run_in_executor(_executor, pg.pending_tasks, agent, limit)
+    return {"pending": tasks, "count": len(tasks)}
+
+
+# ── Tools — infer_ domain ─────────────────────────────────────────────────────
+
+@mcp.tool()
+@sap_gate()
+async def infer_chat(app_id: str, agent: str = "willow", message: str = "") -> dict:
+    """Chat with a Willow agent (routes to Anthropic / Groq / OpenRouter / Ollama).
+    agent: willow, kart, shiva, gerald, etc. Default: willow."""
+    logger.info("[w2] infer_chat app_id=%s agent=%s", app_id, agent)
+    if not message:
+        return {"error": "message required"}
+    loop    = asyncio.get_running_loop()
+    timeout = _TOOL_TIMEOUT_INFERENCE
+
+    def _chat():
+        if agent in _inf.CLOUD_AGENTS:
+            response = _inf.chat_groq(agent, message) or _inf.chat_openrouter(agent, message)
+        else:
+            response = _inf.chat_codex(agent, message)
+        return response or f"[{agent}] Inference unavailable."
+
+    try:
+        response = await asyncio.wait_for(
+            loop.run_in_executor(_executor, _chat),
+            timeout=timeout,
+        )
+        return {"agent": agent, "response": response}
+    except asyncio.TimeoutError:
+        return {"error": "timeout", "tool": "infer_chat", "timeout_s": timeout}
+
+
+@mcp.tool()
+@sap_gate()
+async def infer_imagine(
+    app_id:       str,
+    prompt:       str,
+    output_path:  str = "",
+    aspect_ratio: str = "1:1",
+) -> dict:
+    """Generate an image via Imagen 4 (ganas3 / Google AI). Returns saved file path."""
+    logger.info("[w2] infer_imagine app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor, _inf.imagine_novita, prompt, output_path or None, aspect_ratio,
+    )
+
+
+@mcp.tool()
+@sap_gate()
+async def infer_speak(app_id: str, text: str, voice: str = "default") -> dict:
+    """Text-to-speech via Willow TTS router. Not available in portless mode."""
+    return {"status": "not_available", "reason": "TTS not wired in portless mode"}
+
+
 # ── Tools — fork_ domain ──────────────────────────────────────────────────────
 
 @mcp.tool()
