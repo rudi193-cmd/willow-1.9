@@ -36,15 +36,15 @@ _RATE_WINDOW = 60  # seconds
 _SIGNIFICANT = {
     "Edit", "Write",
     "store_put", "store_update",
-    "mcp__willow__store_add_edge",
-    "mcp__willow__willow_knowledge_ingest",
-    "mcp__willow__willow_knowledge_at",
-    "mcp__willow__willow_task_submit",
+    "mcp__willow__soil_add_edge",
+    "mcp__willow__kb_ingest",
+    "mcp__willow__kb_at",
+    "mcp__willow__agent_task_submit",
 }
 
 _RUN_LEDGER_TOOLS = {
     "Edit", "Write",
-    "mcp__willow__willow_knowledge_ingest",
+    "mcp__willow__kb_ingest",
     "mcp__grove__grove_send_message",
 }
 
@@ -56,13 +56,13 @@ def _target_from_input(tool_name: str, tool_input: dict) -> str:
         return tool_input.get("file_path", "")[:120]
     if tool_name in ("store_put", "store_update"):
         return tool_input.get("collection", "")[:80]
-    if tool_name == "mcp__willow__store_add_edge":
+    if tool_name == "mcp__willow__soil_add_edge":
         return f"{tool_input.get('from_id','')}→{tool_input.get('to_id','')}"
-    if tool_name == "mcp__willow__willow_knowledge_ingest":
+    if tool_name == "mcp__willow__kb_ingest":
         return tool_input.get("title", "")[:80]
-    if tool_name == "mcp__willow__willow_knowledge_at":
+    if tool_name == "mcp__willow__kb_at":
         return tool_input.get("at_time", tool_input.get("query", ""))[:80]
-    if tool_name == "mcp__willow__willow_task_submit":
+    if tool_name == "mcp__willow__agent_task_submit":
         return tool_input.get("task", tool_input.get("command", ""))[:80]
     return ""
 
@@ -73,10 +73,10 @@ def _summary_from(tool_name: str, target: str) -> str:
         "Write": "wrote",
         "store_put": "stored atom in",
         "store_update": "updated atom in",
-        "mcp__willow__store_add_edge": "added edge",
-        "mcp__willow__willow_knowledge_ingest": "ingested KB atom",
-        "mcp__willow__willow_knowledge_at": "replayed KB at",
-        "mcp__willow__willow_task_submit": "submitted task",
+        "mcp__willow__soil_add_edge": "added edge",
+        "mcp__willow__kb_ingest": "ingested KB atom",
+        "mcp__willow__kb_at": "replayed KB at",
+        "mcp__willow__agent_task_submit": "submitted task",
     }
     verb = verbs.get(tool_name, tool_name)
     return f"{verb} {target}".strip()

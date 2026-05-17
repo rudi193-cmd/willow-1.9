@@ -74,7 +74,7 @@ def _check_hs003(tool_name: str, training_consented: bool) -> Optional[dict]:
 
 
 def _check_hs006(tool_name: str, tool_input: dict) -> Optional[dict]:
-    if tool_name in ("mcp__willow__store_put", "mcp__willow__store_update"):
+    if tool_name in ("mcp__willow__soil_put", "mcp__willow__soil_update"):
         collection = tool_input.get("collection", "")
         if collection in _SURVEILLANCE_COLLECTIONS:
             return _block(
