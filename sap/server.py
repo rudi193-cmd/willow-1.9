@@ -817,6 +817,273 @@ async def kb_at(
     return await loop.run_in_executor(_executor, _at)
 
 
+# ── Tools — fork_ domain ──────────────────────────────────────────────────────
+
+@mcp.tool()
+@sap_gate()
+async def fork_create(
+    app_id:     str,
+    title:      str,
+    created_by: str,
+    topic:      str = "",
+    fork_id:    str = "",
+) -> dict:
+    """Create a new fork — a named, bounded unit of work."""
+    logger.info("[w2] fork_create app_id=%s title=%r", app_id, title)
+    loop = asyncio.get_running_loop()
+
+    def _create():
+        import uuid, json as _j
+        fid = fork_id or f"FORK-{uuid.uuid4().hex[:8].upper()}"
+        with PgBridge() as b:
+            b.conn.cursor().execute(
+                "INSERT INTO forks (id,title,created_by,topic,status,participants,changes)"
+                " VALUES (%s,%s,%s,%s,'open',%s,'[]')",
+                (fid, title, created_by, topic, _j.dumps([created_by])),
+            )
+            b.conn.commit()
+        return {"fork_id": fid, "status": "open"}
+
+    return await loop.run_in_executor(_executor, _create)
+
+
+@mcp.tool()
+@sap_gate()
+async def fork_join(app_id: str, fork_id: str, component: str) -> dict:
+    """Join an existing fork as a participant component."""
+    logger.info("[w2] fork_join app_id=%s fork=%s component=%s", app_id, fork_id, component)
+    loop = asyncio.get_running_loop()
+
+    def _join():
+        import json as _j
+        with PgBridge() as b:
+            cur = b.conn.cursor()
+            cur.execute("SELECT participants FROM forks WHERE id=%s", (fork_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"error": f"fork {fork_id} not found"}
+            parts = row[0] if isinstance(row[0], list) else _j.loads(row[0])
+            if component not in parts:
+                parts.append(component)
+            cur.execute("UPDATE forks SET participants=%s WHERE id=%s", (_j.dumps(parts), fork_id))
+            b.conn.commit()
+        return {"fork_id": fork_id, "participants": parts}
+
+    return await loop.run_in_executor(_executor, _join)
+
+
+@mcp.tool()
+@sap_gate()
+async def fork_log(
+    app_id:      str,
+    fork_id:     str,
+    component:   str,
+    type:        str,
+    ref:         str,
+    description: str = "",
+) -> dict:
+    """Log a change to an open fork."""
+    logger.info("[w2] fork_log app_id=%s fork=%s ref=%s", app_id, fork_id, ref)
+    loop = asyncio.get_running_loop()
+
+    def _log():
+        import json as _j
+        from datetime import datetime as _dt, timezone as _tz
+        with PgBridge() as b:
+            cur = b.conn.cursor()
+            cur.execute("SELECT changes FROM forks WHERE id=%s", (fork_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"error": f"fork {fork_id} not found"}
+            changes = row[0] if isinstance(row[0], list) else _j.loads(row[0])
+            changes.append({
+                "component": component, "type": type, "ref": ref,
+                "description": description,
+                "logged_at": _dt.now(_tz.utc).isoformat(),
+            })
+            cur.execute("UPDATE forks SET changes=%s WHERE id=%s", (_j.dumps(changes), fork_id))
+            b.conn.commit()
+        return {"logged": True, "change_count": len(changes)}
+
+    return await loop.run_in_executor(_executor, _log)
+
+
+@mcp.tool(annotations={"destructiveHint": True})
+@sap_gate()
+async def fork_merge(app_id: str, fork_id: str, outcome_note: str = "") -> dict:
+    """Merge an open fork — promotes KB atoms to permanent."""
+    logger.info("[w2] fork_merge app_id=%s fork=%s", app_id, fork_id)
+    loop = asyncio.get_running_loop()
+
+    def _merge():
+        from datetime import datetime as _dt, timezone as _tz
+        now = _dt.now(_tz.utc).isoformat()
+        with PgBridge() as b:
+            cur = b.conn.cursor()
+            cur.execute(
+                "UPDATE forks SET status='merged',merged_at=%s,outcome_note=%s"
+                " WHERE id=%s AND status='open'",
+                (now, outcome_note, fork_id),
+            )
+            b.conn.commit()
+            if cur.rowcount == 0:
+                return {"merged": False, "reason": "not found or not open"}
+            cur.execute("UPDATE knowledge SET fork_id=NULL WHERE fork_id=%s", (fork_id,))
+            b.conn.commit()
+            return {"merged": True, "promoted_count": cur.rowcount}
+
+    return await loop.run_in_executor(_executor, _merge)
+
+
+@mcp.tool(annotations={"destructiveHint": True})
+@sap_gate()
+async def fork_delete(app_id: str, fork_id: str, reason: str = "") -> dict:
+    """Delete an open fork — archives KB atoms."""
+    logger.info("[w2] fork_delete app_id=%s fork=%s", app_id, fork_id)
+    loop = asyncio.get_running_loop()
+
+    def _delete():
+        from datetime import datetime as _dt, timezone as _tz
+        now = _dt.now(_tz.utc).isoformat()
+        with PgBridge() as b:
+            cur = b.conn.cursor()
+            cur.execute(
+                "UPDATE forks SET status='deleted',deleted_at=%s,outcome_note=%s"
+                " WHERE id=%s AND status='open'",
+                (now, reason, fork_id),
+            )
+            b.conn.commit()
+            if cur.rowcount == 0:
+                return {"deleted": False, "reason": "not found or not open"}
+            cur.execute(
+                "UPDATE knowledge SET invalid_at=now() WHERE fork_id=%s AND invalid_at IS NULL",
+                (fork_id,),
+            )
+            b.conn.commit()
+            return {"deleted": True, "archived_count": cur.rowcount}
+
+    return await loop.run_in_executor(_executor, _delete)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fork_status(app_id: str, fork_id: str) -> dict:
+    """Get the full status of a fork."""
+    logger.info("[w2] fork_status app_id=%s fork=%s", app_id, fork_id)
+    loop = asyncio.get_running_loop()
+
+    def _status():
+        import json as _j
+        with PgBridge() as b:
+            cur = b.conn.cursor()
+            cur.execute(
+                "SELECT id,title,created_by,topic,status,participants,changes,"
+                "created_at,merged_at,deleted_at,outcome_note FROM forks WHERE id=%s",
+                (fork_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return {"error": f"fork {fork_id} not found"}
+        return {
+            "fork_id":      row[0], "title":        row[1], "created_by":   row[2],
+            "topic":        row[3], "status":        row[4],
+            "participants": row[5] if isinstance(row[5], list) else _j.loads(row[5]),
+            "changes":      row[6] if isinstance(row[6], list) else _j.loads(row[6]),
+            "created_at":   str(row[7]),
+            "merged_at":    str(row[8]) if row[8] else None,
+            "deleted_at":   str(row[9]) if row[9] else None,
+            "outcome_note": row[10],
+        }
+
+    return await loop.run_in_executor(_executor, _status)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fork_list(app_id: str, status: str = "open") -> list:
+    """List forks by status (open | merged | deleted)."""
+    logger.info("[w2] fork_list app_id=%s status=%s", app_id, status)
+    loop = asyncio.get_running_loop()
+
+    def _list():
+        with PgBridge() as b:
+            cur = b.conn.cursor()
+            cur.execute(
+                "SELECT id,title,created_at,created_by,topic,"
+                "jsonb_array_length(participants),jsonb_array_length(changes)"
+                " FROM forks WHERE status=%s ORDER BY created_at DESC LIMIT 100",
+                (status,),
+            )
+            return [
+                {"fork_id": r[0], "title": r[1], "created_at": str(r[2]),
+                 "created_by": r[3], "topic": r[4],
+                 "participant_count": r[5], "change_count": r[6]}
+                for r in cur.fetchall()
+            ]
+
+    return await loop.run_in_executor(_executor, _list)
+
+
+# ── Tools — skill_ domain ─────────────────────────────────────────────────────
+
+@mcp.tool()
+@sap_gate(write=True)
+async def skill_put(
+    app_id:          str,
+    name:            str,
+    domain:          str,
+    content:         str,
+    trigger:         str,
+    auto_load:       bool = True,
+    model_agnostic:  bool = True,
+) -> dict:
+    """Store or update a Willow skill in the registry."""
+    logger.info("[w2] skill_put app_id=%s name=%s domain=%s", app_id, name, domain)
+    loop = asyncio.get_running_loop()
+
+    def _put():
+        from willow.skills import skill_put as _skill_put
+        skill_id = _skill_put(
+            store, name=name, domain=domain, content=content, trigger=trigger,
+            auto_load=auto_load, model_agnostic=model_agnostic,
+        )
+        return {"skill_id": skill_id}
+
+    return await loop.run_in_executor(_executor, _put)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def skill_load(app_id: str, context: str) -> dict:
+    """Load relevant skills for the current context.
+    Returns up to 3 auto-loadable skills matched to the context."""
+    logger.info("[w2] skill_load app_id=%s ctx=%r", app_id, context)
+    loop = asyncio.get_running_loop()
+
+    def _load():
+        from willow.skills import skill_load as _skill_load
+        skills = _skill_load(store, context=context)
+        return {"skills": skills}
+
+    return await loop.run_in_executor(_executor, _load)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def skill_list(app_id: str, domain: str = "") -> dict:
+    """List all skills in the registry, optionally filtered by domain.
+    domain: session | task | fork | grove | system"""
+    logger.info("[w2] skill_list app_id=%s domain=%s", app_id, domain)
+    loop = asyncio.get_running_loop()
+
+    def _list():
+        from willow.skills import skill_list as _skill_list
+        skills = _skill_list(store, domain=domain or None)
+        return {"skills": skills}
+
+    return await loop.run_in_executor(_executor, _list)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
