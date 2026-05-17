@@ -224,9 +224,220 @@ mcp = FastMCP(
     lifespan=_lifespan,
 )
 
-# ── Tools ─────────────────────────────────────────────────────────────────────
-# Phase 2+: tool implementations added here by domain.
-# Phase 1: server boots, tools/list returns 0 tools, no import errors.
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+_TOOL_TIMEOUT           = float(os.environ.get("WILLOW_TOOL_TIMEOUT",           "45"))
+_TOOL_TIMEOUT_INFERENCE = float(os.environ.get("WILLOW_INFERENCE_TIMEOUT",      "300"))
+
+
+def _check_ollama() -> dict:
+    try:
+        import urllib.request
+        url = os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/tags"
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            import json as _json
+            data = _json.loads(resp.read())
+            models = [m["name"] for m in data.get("models", [])]
+            return {"running": True, "models": models}
+    except Exception:
+        return {"running": False}
+
+
+def _hot_reload(target: str = "all") -> dict:
+    global pg, store, _inf, _blast
+    import importlib
+    reloaded: list[str] = []
+    errors:   list[str] = []
+
+    if target in ("all", "blast"):
+        try:
+            sys.modules.pop("sap.core.blast", None)
+            import sap.core.blast as _blast_new
+            importlib.reload(_blast_new)
+            _blast = _blast_new
+            reloaded.append("blast: reloaded")
+        except Exception as e:
+            errors.append(f"blast: {e}")
+
+    if target in ("all", "inference"):
+        try:
+            sys.modules.pop("sap.core.inference", None)
+            import sap.core.inference as _inf_new
+            importlib.reload(_inf_new)
+            _inf = _inf_new
+            reloaded.append("inference: reloaded")
+        except Exception as e:
+            errors.append(f"inference: {e}")
+
+    if target in ("all", "postgres"):
+        try:
+            sys.modules.pop("core.pg_bridge", None)
+            import core.pg_bridge as _pgmod
+            importlib.reload(_pgmod)
+            pg = _pgmod.PgBridge()
+            reloaded.append("postgres: reconnected")
+        except Exception as e:
+            errors.append(f"postgres: {e}")
+
+    if target in ("all", "store"):
+        try:
+            store = WillowStore(STORE_ROOT)
+            reloaded.append(f"store: reloaded ({STORE_ROOT})")
+        except Exception as e:
+            errors.append(f"store: {e}")
+
+    return {
+        "status":   "reloaded" if not errors else "partial",
+        "reloaded": reloaded,
+        "errors":   errors if errors else None,
+    }
+
+
+# ── Tools — fleet_ domain ─────────────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_status(app_id: str) -> dict:
+    """Call this first. Confirms Postgres, SOIL, and Ollama are up.
+    If degraded or down, surface it and stop — everything else depends on this."""
+    logger.info("[w2] fleet_status app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+
+    local_stats  = await loop.run_in_executor(_executor, store.stats)
+    local_count  = sum(s["count"] for s in local_stats.values()) if local_stats else 0
+    pg_stats     = await loop.run_in_executor(_executor, pg.stats) if pg and hasattr(pg, "stats") else {}
+    ollama       = await loop.run_in_executor(_executor, _check_ollama)
+
+    try:
+        from sap.core.gate import SAFE_ROOT, PROFESSOR_ROOT, _verify_pgp
+        _pass, _fail = 0, []
+        for mp in list(SAFE_ROOT.glob("*/safe-app-manifest.json")) + \
+                  list(PROFESSOR_ROOT.glob("*/safe-app-manifest.json")):
+            ok, _ = await loop.run_in_executor(_executor, _verify_pgp, mp)
+            if ok:
+                _pass += 1
+            else:
+                _fail.append(mp.parent.name)
+        manifests: dict = {"pass": _pass, "fail": len(_fail)}
+        if _fail:
+            manifests["failed"] = _fail
+    except Exception as e:
+        manifests = {"error": str(e)}
+
+    return {
+        "local_store": {"collections": len(local_stats), "records": local_count},
+        "postgres":    pg_stats if pg_stats else ("not_connected" if pg is None else "connected"),
+        "ollama":      ollama,
+        "manifests":   manifests,
+        "mode":        "portless",
+    }
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_health(app_id: str) -> dict:
+    """Fast (<200ms) MCP server health check: circuit breaker state, pool usage,
+    tool executor threads, uptime. Use to diagnose hangs without touching Postgres."""
+    logger.info("[w2] fleet_health app_id=%s", app_id)
+    try:
+        from core.pg_bridge import cb_state as _cb_state, _pool as _pg_pool, _pool_maxconn as _pmx
+        cb        = _cb_state()
+        pool_used = len(_pg_pool._used) if _pg_pool else 0
+        pool_info: dict = {"used": pool_used, "max": _pmx, "pct": round(pool_used / _pmx * 100)}
+    except Exception as he:
+        cb        = {"error": str(he)}
+        pool_info = {}
+
+    import threading
+    executor_threads = len([t for t in threading.enumerate() if "willow-tool" in t.name])
+
+    return {
+        "status":                 "ok",
+        "circuit_breaker":        cb,
+        "pool":                   pool_info,
+        "tool_executor_threads":  executor_threads,
+        "tool_timeout_s":         _TOOL_TIMEOUT,
+        "pg_connect_timeout_s":   int(os.environ.get("WILLOW_PG_CONNECT_TIMEOUT", "5")),
+        "pg_statement_timeout_ms": int(os.environ.get("WILLOW_PG_STATEMENT_TIMEOUT", "30000")),
+    }
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_system_status(app_id: str) -> dict:
+    """Full system status: store stats, Postgres stats, connectivity, gate manifests."""
+    logger.info("[w2] fleet_system_status app_id=%s", app_id)
+    return await fleet_status(app_id=app_id)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_agents(app_id: str) -> dict:
+    """List registered Willow agents and their trust levels."""
+    logger.info("[w2] fleet_agents app_id=%s", app_id)
+    agents = [
+        # Claude Code CLI — ENGINEER tier
+        {"name": "heimdallr",   "trust": "ENGINEER", "role": "Watchman, gatekeeper. Claude Code CLI."},
+        {"name": "hanuman",     "trust": "ENGINEER", "role": "Bridge-builder. Corpus indexer. Migration engine."},
+        {"name": "opus",        "trust": "ENGINEER", "role": "Post-obstacle builder. Claude Code CLI."},
+        # OPERATOR tier
+        {"name": "willow",      "trust": "OPERATOR", "role": "Primary interface"},
+        {"name": "ada",         "trust": "OPERATOR", "role": "Systems admin, continuity"},
+        {"name": "steve",       "trust": "OPERATOR", "role": "Prime node, coordinator"},
+        # ENGINEER tier
+        {"name": "kart",        "trust": "ENGINEER", "role": "Infrastructure, multi-step tasks"},
+        {"name": "shiva",       "trust": "ENGINEER", "role": "Bridge Ring, SAFE face"},
+        {"name": "ganesha",     "trust": "ENGINEER", "role": "Diagnostic, obstacle removal"},
+        # WORKER tier — professors
+        {"name": "gerald",      "trust": "WORKER",   "role": "Acting Dean, philosophical"},
+        {"name": "riggs",       "trust": "WORKER",   "role": "Applied reality engineering"},
+        {"name": "pigeon",      "trust": "WORKER",   "role": "Carrier, connector"},
+        {"name": "hanz",        "trust": "WORKER",   "role": "Code, holds Copenhagen"},
+        {"name": "jeles",       "trust": "WORKER",   "role": "Librarian, special collections"},
+        {"name": "binder",      "trust": "WORKER",   "role": "Records, filing"},
+        {"name": "oakenscroll", "trust": "WORKER",   "role": "Scroll-keeper, long-form records"},
+        {"name": "nova",        "trust": "WORKER",   "role": "Exploration, new territory"},
+        {"name": "alexis",      "trust": "WORKER",   "role": "Analysis, structured reasoning"},
+        {"name": "mitra",       "trust": "WORKER",   "role": "Mediation, relations"},
+        {"name": "consus",      "trust": "WORKER",   "role": "Mathematics, formal systems"},
+        {"name": "jane",        "trust": "WORKER",   "role": "Research, documentation"},
+        {"name": "ofshield",    "trust": "WORKER",   "role": "Keeper of the Gate"},
+    ]
+    # Merge locally registered agents from ~/.willow/agents.json
+    try:
+        import json as _json
+        override = Path.home() / ".willow" / "agents.json"
+        if override.exists():
+            existing = {a["name"] for a in agents}
+            for entry in _json.loads(override.read_text()):
+                if entry.get("name") and entry["name"] not in existing:
+                    agents.append(entry)
+    except Exception:
+        pass
+    return {"agents": agents, "count": len(agents)}
+
+
+@mcp.tool(annotations={"destructiveHint": True})
+@sap_gate()
+async def fleet_reload(app_id: str, target: str = "all") -> dict:
+    """Hot-reload Willow modules without restarting the MCP server.
+    target: all | blast | inference | postgres | store"""
+    logger.info("[w2] fleet_reload app_id=%s target=%s", app_id, target)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _hot_reload, target)
+
+
+@mcp.tool(annotations={"destructiveHint": True})
+@sap_gate()
+async def fleet_restart(app_id: str) -> dict:
+    """Restart the SAP MCP server process. Claude Code reconnects automatically."""
+    logger.info("[w2] fleet_restart app_id=%s — process exiting", app_id)
+    import threading
+    def _delayed_exit():
+        import time; time.sleep(0.2)
+        os._exit(0)
+    threading.Thread(target=_delayed_exit, daemon=True).start()
+    return {"status": "restarting", "note": "SAP MCP process exiting. Claude Code will reconnect automatically."}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
