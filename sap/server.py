@@ -243,6 +243,22 @@ def _check_ollama() -> dict:
         return {"running": False}
 
 
+def _normalize_local_paths(text: str) -> str:
+    """Reduce PII leakage from local filesystem paths in written content."""
+    try:
+        if not isinstance(text, str) or not text:
+            return text
+        home = str(Path.home())
+        if home and home in text:
+            text = text.replace(home, "~")
+        import re
+        text = re.sub(r"(?<!\w)/home/[^/\s]+", "~", text)
+        text = re.sub(r"(?<!\w)/Users/[^/\s]+", "~", text)
+        return text
+    except Exception:
+        return text
+
+
 def _qualifies_as_flag(record: dict, deviation: float) -> bool:
     return (
         record.get("type") in ("failure-log",) or
@@ -624,6 +640,181 @@ async def soil_audit(app_id: str, collection: str, limit: int = 20) -> list:
     logger.info("[w2] soil_audit app_id=%s col=%s", app_id, collection)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_executor, store.audit_log, collection, limit)
+
+
+# ── Tools — kb_ domain (Postgres knowledge base) ─────────────────────────────
+
+def _no_pg() -> dict:
+    return {"error": "not_available", "reason": "Postgres not connected"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def kb_search(
+    app_id:            str,
+    query:             str,
+    limit:             int  = 20,
+    semantic:          bool = False,
+    include_embedding: bool = False,
+    fields:            list = None,
+) -> dict:
+    """Search Willow's Postgres knowledge graph before building anything.
+    Returns atoms by title and summary. Search first — another agent may have already
+    solved or decided this. Use kb_get to fetch the full atom."""
+    logger.info("[w2] kb_search app_id=%s q=%r semantic=%s", app_id, query, semantic)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+
+    def _search():
+        if semantic:
+            try:
+                knowledge = pg.knowledge_search_semantic(
+                    query, limit=limit, include_embedding=include_embedding, fields=fields
+                )
+                mode = "semantic"
+            except Exception:
+                knowledge = pg.knowledge_search(
+                    query, limit=limit, include_embedding=include_embedding, fields=fields
+                )
+                mode = "degraded"
+        else:
+            knowledge = pg.knowledge_search(
+                query, limit=limit, include_embedding=include_embedding, fields=fields
+            )
+            mode = "keyword"
+        for atom in knowledge[:3]:
+            try:
+                pg.promote(atom["id"])
+            except Exception:
+                pass
+        return {"knowledge": knowledge, "total": len(knowledge), "mode": mode}
+
+    return await loop.run_in_executor(_executor, _search)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def kb_query(
+    app_id:            str,
+    query:             str,
+    limit:             int  = 20,
+    include_embedding: bool = False,
+    fields:            list = None,
+) -> dict:
+    """General search across the knowledge graph. Alias for kb_search (keyword mode)."""
+    logger.info("[w2] kb_query app_id=%s q=%r", app_id, query)
+    return await kb_search(
+        app_id=app_id, query=query, limit=limit,
+        semantic=False, include_embedding=include_embedding, fields=fields,
+    )
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def kb_get(
+    app_id:            str,
+    id:                str,
+    include_embedding: bool = False,
+    include_invalid:   bool = False,
+    fields:            list = None,
+) -> dict:
+    """Fetch a single knowledge atom by id. Omits embedding by default to keep payloads small."""
+    logger.info("[w2] kb_get app_id=%s id=%s", app_id, id)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    atom = await loop.run_in_executor(
+        _executor, pg.knowledge_get, id, include_invalid, include_embedding, fields
+    )
+    return {"atom": atom, "found": bool(atom)}
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def kb_ingest(
+    app_id:      str,
+    title:       str,
+    summary:     str,
+    source_type: str = "mcp",
+    source_id:   str = "",
+    category:    str = "general",
+    domain:      str = "",
+    force:       bool = False,
+) -> dict:
+    """Add a knowledge atom to Willow's Postgres KB.
+    Gates on REDUNDANT/CONTRADICTION — returns {blocked:true} if a duplicate or conflict
+    is detected. Pass force=true to override the gate and write anyway."""
+    logger.info("[w2] kb_ingest app_id=%s title=%r force=%s", app_id, title, force)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+
+    clean_summary   = _normalize_local_paths(summary)
+    clean_source_id = _normalize_local_paths(source_id)
+    effective_domain = domain or _MCP_AGENT
+
+    def _ingest():
+        if not force:
+            try:
+                from sap.core.memory_gate import check_candidate
+                gate = check_candidate(
+                    title=title, summary=clean_summary,
+                    domain=effective_domain, store=store, pg=pg,
+                    collection=f"{effective_domain}/atoms",
+                )
+                hard_flags = {"REDUNDANT", "CONTRADICTION"}
+                triggered  = hard_flags & set(gate.get("flags", []))
+                if triggered:
+                    return {
+                        "blocked":        True,
+                        "flags":          gate["flags"],
+                        "recommendation": gate["recommendation"],
+                        "evidence":       gate["evidence"],
+                        "hint":           "Pass force=true to override and write anyway.",
+                    }
+            except Exception as gate_err:
+                logger.warning("[w2] memory_gate check failed: %s", gate_err)
+
+        atom_id = pg.ingest_atom(
+            title=title, summary=clean_summary,
+            source_type=source_type, source_id=clean_source_id,
+            category=category, domain=effective_domain or None,
+        )
+        out: dict = {"id": atom_id, "status": "ingested" if atom_id else "failed"}
+        if not atom_id:
+            out["error"] = getattr(pg, "_last_ingest_error", None)
+        if force:
+            out["forced"] = True
+        return out
+
+    return await loop.run_in_executor(_executor, _ingest)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def kb_at(
+    app_id:  str,
+    query:   str,
+    at_time: str,
+    project: str = "",
+    limit:   int = 20,
+) -> dict:
+    """Temporal replay: what did Willow know about query at a specific point in time?
+    Uses bi-temporal edges — returns atoms valid at that moment.
+    at_time: ISO 8601, e.g. '2025-01-15T12:00:00Z'"""
+    logger.info("[w2] kb_at app_id=%s q=%r at=%s", app_id, query, at_time)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+
+    def _at():
+        from datetime import datetime as _dt
+        at = _dt.fromisoformat(at_time.replace("Z", "+00:00"))
+        results = pg.knowledge_at(query, at_time=at, project=project or None, limit=limit)
+        return {"results": results, "count": len(results), "at_time": at_time}
+
+    return await loop.run_in_executor(_executor, _at)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
