@@ -1343,6 +1343,502 @@ async def skill_list(app_id: str, domain: str = "") -> dict:
     return await loop.run_in_executor(_executor, _list)
 
 
+# ── Tools — mem_ domain (Jeles / Binder / Ratify) ────────────────────────────
+
+@mcp.tool()
+@sap_gate()
+async def mem_jeles_register(
+    app_id:      str,
+    agent:       str,
+    jsonl_path:  str,
+    session_id:  str,
+    cwd:         str = "",
+    turn_count:  int = 0,
+    file_size:   int = 0,
+) -> dict:
+    """Jeles: Register a raw JSONL in an agent's schema. Returns BASE 17 ID."""
+    logger.info("[w2] mem_jeles_register app_id=%s agent=%s sid=%s", app_id, agent, session_id)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor, pg.jeles_register_jsonl,
+        agent, jsonl_path, session_id, cwd or None, turn_count, file_size,
+    )
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def mem_jeles_extract(
+    app_id:    str,
+    agent:     str,
+    jsonl_id:  str,
+    content:   str,
+    title:     str  = "",
+    domain:    str  = "meta",
+    depth:     int  = 1,
+    certainty: float = 0.98,
+) -> dict:
+    """Jeles: Extract an atom from a registered JSONL. Certainty must exceed 0.95."""
+    logger.info("[w2] mem_jeles_extract app_id=%s agent=%s jsonl=%s", app_id, agent, jsonl_id)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor, pg.jeles_extract_atom,
+        agent, jsonl_id, content, domain, depth, certainty, title or None,
+    )
+
+
+@mcp.tool()
+@sap_gate()
+async def mem_binder_file(
+    app_id:    str,
+    agent:     str,
+    jsonl_id:  str,
+    dest_path: str,
+) -> dict:
+    """Binder: Copy JSONL to agent's .tmp/ folder, update status to filed_tmp."""
+    logger.info("[w2] mem_binder_file app_id=%s agent=%s jsonl=%s", app_id, agent, jsonl_id)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, pg.binder_file, agent, jsonl_id, dest_path)
+
+
+@mcp.tool()
+@sap_gate()
+async def mem_binder_edge(
+    app_id:      str,
+    agent:       str,
+    source_atom: str,
+    target_atom: str,
+    edge_type:   str,
+) -> dict:
+    """Binder: Propose an edge discovered while filing. Status='tmp' until ratified."""
+    logger.info("[w2] mem_binder_edge app_id=%s agent=%s %s→%s", app_id, agent, source_atom, target_atom)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor, pg.binder_propose_edge, agent, source_atom, target_atom, edge_type,
+    )
+
+
+@mcp.tool()
+@sap_gate()
+async def mem_ratify(
+    app_id:     str,
+    agent:      str,
+    jsonl_id:   str,
+    approve:    bool = True,
+    cache_path: str  = "",
+) -> dict:
+    """Ratify or reject a JSONL and all its atoms/edges.
+    approve=True promotes .tmp/ to cache/. approve=False clears .tmp/."""
+    logger.info("[w2] mem_ratify app_id=%s agent=%s jsonl=%s approve=%s", app_id, agent, jsonl_id, approve)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor, pg.ratify, agent, jsonl_id, approve, cache_path or None,
+    )
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def mem_check(
+    app_id:     str,
+    title:      str,
+    summary:    str,
+    domain:     str = "",
+    collection: str = "",
+) -> dict:
+    """Check a knowledge candidate against REDUNDANT/CONTRADICTION gates before ingesting."""
+    logger.info("[w2] mem_check app_id=%s title=%r", app_id, title)
+    loop = asyncio.get_running_loop()
+
+    def _check():
+        from sap.core.memory_gate import check_candidate
+        effective_domain = domain or _MCP_AGENT
+        return check_candidate(
+            title=title, summary=summary,
+            domain=effective_domain, store=store, pg=pg,
+            collection=collection or f"{effective_domain}/atoms",
+        )
+
+    return await loop.run_in_executor(_executor, _check)
+
+
+# ── Tools — index_ domain (Opus) ──────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def index_search(
+    app_id:   str,
+    query:    str,
+    limit:    int  = 20,
+    semantic: bool = False,
+) -> dict:
+    """Search opus.atoms by title or content."""
+    logger.info("[w2] index_search app_id=%s q=%r semantic=%s", app_id, query, semantic)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+
+    def _search():
+        if semantic:
+            try:
+                results = pg.search_opus_semantic(query, limit)
+            except Exception:
+                results = pg.search_opus(query, limit)
+        else:
+            results = pg.search_opus(query, limit)
+        return {"results": results, "count": len(results)}
+
+    return await loop.run_in_executor(_executor, _search)
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def index_ingest(
+    app_id:     str,
+    content:    str,
+    domain:     str = "meta",
+    depth:      int = 1,
+    session_id: str = "",
+) -> dict:
+    """Write an atom to opus.atoms. Use for Opus-tier knowledge distinct from the main KB."""
+    logger.info("[w2] index_ingest app_id=%s domain=%s depth=%d", app_id, domain, depth)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    atom_id = await loop.run_in_executor(
+        _executor, pg.ingest_opus_atom,
+        content, domain, depth, session_id or None,
+    )
+    return {"id": atom_id, "status": "ingested" if atom_id else "failed"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def index_feedback(app_id: str, domain: str = "") -> dict:
+    """Read opus feedback entries. Omit domain to return all entries."""
+    logger.info("[w2] index_feedback app_id=%s domain=%s", app_id, domain)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    entries = await loop.run_in_executor(_executor, pg.opus_feedback, domain or None)
+    return {"feedback": entries, "count": len(entries)}
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def index_feedback_write(
+    app_id:    str,
+    domain:    str,
+    principle: str,
+    source:    str = "self",
+) -> dict:
+    """Write a feedback principle to the opus feedback table."""
+    logger.info("[w2] index_feedback_write app_id=%s domain=%s", app_id, domain)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(_executor, pg.opus_feedback_write, domain, principle, source)
+    return {"status": "written" if ok else "failed"}
+
+
+@mcp.tool()
+@sap_gate()
+async def index_journal(app_id: str, entry: str, session_id: str = "") -> dict:
+    """Write a journal entry to the opus journal."""
+    logger.info("[w2] index_journal app_id=%s", app_id)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    jid = await loop.run_in_executor(
+        _executor, pg.opus_journal_write, entry, session_id or None,
+    )
+    return {"id": jid, "status": "logged" if jid else "failed"}
+
+
+# ── Tools — ledger_ domain (Frank Ledger) ────────────────────────────────────
+
+@mcp.tool()
+@sap_gate(write=True)
+async def ledger_write(
+    app_id:     str,
+    project:    str,
+    event_type: str,
+    content:    dict,
+) -> dict:
+    """Append an entry to the FRANK tamper-evident ledger."""
+    logger.info("[w2] ledger_write app_id=%s project=%s event=%s", app_id, project, event_type)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    record_id = await loop.run_in_executor(
+        _executor, pg.ledger_append, project, event_type, content,
+    )
+    return {"id": record_id, "status": "written"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def ledger_read(app_id: str, project: str = "", limit: int = 20) -> dict:
+    """Read the FRANK tamper-evident ledger, optionally filtered by project."""
+    logger.info("[w2] ledger_read app_id=%s project=%s", app_id, project)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    entries = await loop.run_in_executor(
+        _executor, pg.ledger_read, project or None, limit,
+    )
+    return {"entries": entries, "count": len(entries)}
+
+
+# ── Tools — handoff_ domain ───────────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def handoff_latest(app_id: str, agent: str = "") -> dict:
+    """Fetch the most recent session handoff document for an agent."""
+    logger.info("[w2] handoff_latest app_id=%s agent=%s", app_id, agent)
+    loop = asyncio.get_running_loop()
+
+    def _latest():
+        import json as _j, sqlite3 as _sql
+        if not Path(HANDOFF_DB).exists():
+            return {"error": "handoffs.db not found. Run handoff_rebuild first."}
+        agent_filter = agent or app_id or os.environ.get("WILLOW_AGENT_NAME", "")
+        conn = _sql.connect(HANDOFF_DB)
+        conn.row_factory = _sql.Row
+        cur  = conn.cursor()
+        sql_agent = """
+            SELECT f.filename, h.handoff_date, h.summary, h.open_threads, h.questions
+            FROM handoffs h JOIN files f ON h.file_id = f.id
+            WHERE h.file_type = 'session' AND f.filename LIKE ?
+            ORDER BY f.mtime DESC LIMIT 1
+        """
+        sql_any = """
+            SELECT f.filename, h.handoff_date, h.summary, h.open_threads, h.questions
+            FROM handoffs h JOIN files f ON h.file_id = f.id
+            WHERE h.file_type = 'session'
+            ORDER BY f.mtime DESC LIMIT 1
+        """
+        row = cur.execute(sql_agent, (f"%{agent_filter}%",)).fetchone() if agent_filter else None
+        if not row:
+            row = cur.execute(sql_any).fetchone()
+        conn.close()
+        if not row:
+            return {"error": "No session handoffs found."}
+        return {
+            "filename":     row["filename"],
+            "date":         row["handoff_date"],
+            "summary":      row["summary"],
+            "open_threads": _j.loads(row["open_threads"]) if row["open_threads"] else [],
+            "questions":    _j.loads(row["questions"])    if row["questions"]    else [],
+        }
+
+    return await loop.run_in_executor(_executor, _latest)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def handoff_search(
+    app_id:    str,
+    query:     str,
+    limit:     int = 10,
+    file_type: str = "",
+) -> list:
+    """Search handoff documents by content."""
+    logger.info("[w2] handoff_search app_id=%s q=%r", app_id, query)
+    loop = asyncio.get_running_loop()
+
+    def _search():
+        import sqlite3 as _sql
+        if not Path(HANDOFF_DB).exists():
+            return [{"error": "handoffs.db not found. Run handoff_rebuild first."}]
+        conn = _sql.connect(HANDOFF_DB)
+        conn.row_factory = _sql.Row
+        cur  = conn.cursor()
+        sql  = ("SELECT f.filename, f.file_type, h.handoff_date, h.summary, h.turns"
+                " FROM handoffs h JOIN files f ON h.file_id = f.id"
+                " WHERE (h.summary LIKE ? OR h.raw_content LIKE ?)")
+        params: list = [f"%{query}%", f"%{query}%"]
+        if file_type:
+            sql += " AND h.file_type = ?"
+            params.append(file_type)
+        sql += " ORDER BY h.handoff_date DESC LIMIT ?"
+        params.append(limit)
+        rows = cur.execute(sql, params).fetchall()
+        conn.close()
+        return [{"filename": r["filename"], "type": r["file_type"],
+                 "date": r["handoff_date"], "turns": r["turns"],
+                 "summary": (r["summary"] or "")[:200]} for r in rows]
+
+    return await loop.run_in_executor(_executor, _search)
+
+
+@mcp.tool()
+@sap_gate()
+async def handoff_rebuild(app_id: str) -> dict:
+    """Rebuild the handoffs.db index by scanning HANDOFF_DIRS."""
+    logger.info("[w2] handoff_rebuild app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+
+    def _rebuild():
+        import subprocess as _sp
+        canonical = _SAP_ROOT / "tools" / "build_handoff_db.py"
+        local     = Path(HANDOFF_DB).parent / "build_handoff_db.py"
+        script    = str(canonical) if canonical.exists() else str(local)
+        if not Path(script).exists():
+            return {"error": f"build script not found: {script}"}
+        proc = _sp.run(
+            [sys.executable, script], capture_output=True, text=True, timeout=60,
+        )
+        return {
+            "status":  "ok" if proc.returncode == 0 else "error",
+            "stdout":  proc.stdout.strip()[-1000:],
+            "stderr":  proc.stderr.strip()[-500:],
+            "db_path": HANDOFF_DB,
+        }
+
+    return await loop.run_in_executor(_executor, _rebuild)
+
+
+# ── Tools — nest_ domain ──────────────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def nest_scan(app_id: str) -> dict:
+    """Scan the Nest intake queue — returns staged items and current queue."""
+    logger.info("[w2] nest_scan app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+
+    def _scan():
+        from sap.core.nest_intake import scan_nest, get_queue
+        staged = scan_nest()
+        queue  = get_queue()
+        return {"staged": staged, "queue": queue, "pending": len(queue)}
+
+    return await loop.run_in_executor(_executor, _scan)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def nest_queue(app_id: str) -> dict:
+    """Return the current Nest intake queue without scanning."""
+    logger.info("[w2] nest_queue app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+
+    def _queue():
+        from sap.core.nest_intake import get_queue
+        q = get_queue()
+        return {"queue": q, "pending": len(q)}
+
+    return await loop.run_in_executor(_executor, _queue)
+
+
+@mcp.tool()
+@sap_gate()
+async def nest_file(
+    app_id:        str,
+    item_id:       str,
+    action:        str,
+    override_dest: str = "",
+) -> dict:
+    """Review a Nest item. action: confirm | skip.
+    confirm moves the item to its destination; skip removes it from the queue."""
+    logger.info("[w2] nest_file app_id=%s item=%s action=%s", app_id, item_id, action)
+    loop = asyncio.get_running_loop()
+
+    def _file():
+        from sap.core.nest_intake import confirm_review, skip_item
+        if action == "confirm":
+            return confirm_review(item_id, override_dest=override_dest or None)
+        return skip_item(item_id)
+
+    return await loop.run_in_executor(_executor, _file)
+
+
+# ── Tools — miscellaneous (blast, journal, governance, persona, base17, agent_create) ──
+
+@mcp.tool()
+@sap_gate()
+async def fleet_blast(app_id: str, summarize: bool = False) -> dict:
+    """Blast-radius scan: map every sensitive file and credential env var reachable by an AI agent.
+    Returns a score (0-100, higher = cleaner), reachable paths, and flagged env vars."""
+    logger.info("[w2] fleet_blast app_id=%s summarize=%s", app_id, summarize)
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        result = _blast.run_blast()
+        return _blast.summarize_blast(result) if summarize else result
+
+    return await loop.run_in_executor(_executor, _run)
+
+
+@mcp.tool()
+@sap_gate()
+async def kb_journal(app_id: str, entry: str, domain: str = "meta") -> dict:
+    """Write a journal entry to the knowledge graph."""
+    logger.info("[w2] kb_journal app_id=%s domain=%s", app_id, domain)
+    loop = asyncio.get_running_loop()
+
+    def _journal():
+        if pg:
+            atom_id = pg.ingest_ganesha_atom(entry, domain=domain, depth=1)
+            return {"status": "logged", "atom_id": atom_id}
+        rid, action, _ = store.put("journal/entries", {"text": entry})
+        return {"status": "logged_local", "id": rid}
+
+    return await loop.run_in_executor(_executor, _journal)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_governance(app_id: str) -> dict:
+    """Governance status. Dual Commit proposals live in governance/commits/."""
+    return {"status": "portless_mode",
+            "note": "Governance runs via Dual Commit proposals in governance/commits/"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_persona(app_id: str, agent: str = "willow") -> dict:
+    """Look up an agent's persona profile location."""
+    return {"agent": agent, "note": f"Persona profiles at agents/{agent}/AGENT_PROFILE.md"}
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def fleet_base17(app_id: str, length: int = 5) -> dict:
+    """Generate a BASE 17 ID."""
+    return {"id": PgBridge.gen_id(length)}
+
+
+@mcp.tool()
+@sap_gate()
+async def agent_create(
+    app_id:      str,
+    name:        str,
+    trust:       str = "WORKER",
+    role:        str = "",
+    folder_root: str = "",
+) -> dict:
+    """Create a new registered agent with a SAFE manifest and folder structure."""
+    logger.info("[w2] agent_create app_id=%s name=%s trust=%s", app_id, name, trust)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _executor, pg.agent_create,
+        name, trust, role, folder_root or None,
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
