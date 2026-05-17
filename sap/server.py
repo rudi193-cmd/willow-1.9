@@ -1765,7 +1765,7 @@ async def nest_file(
 
 # ── Tools — miscellaneous (blast, journal, governance, persona, base17, agent_create) ──
 
-@mcp.tool()
+@mcp.tool(annotations={"readOnlyHint": True})
 @sap_gate()
 async def fleet_blast(app_id: str, summarize: bool = False) -> dict:
     """Blast-radius scan: map every sensitive file and credential env var reachable by an AI agent.
