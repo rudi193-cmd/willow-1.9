@@ -1699,13 +1699,13 @@ async def handoff_latest(app_id: str, agent: str = "") -> dict:
             SELECT f.filename, h.handoff_date, h.summary, h.open_threads, h.questions
             FROM handoffs h JOIN files f ON h.file_id = f.id
             WHERE h.file_type = 'session' AND f.filename LIKE ?
-            ORDER BY f.mtime DESC LIMIT 1
+            ORDER BY f.mtime DESC, f.id DESC LIMIT 1
         """
         sql_any = """
             SELECT f.filename, h.handoff_date, h.summary, h.open_threads, h.questions
             FROM handoffs h JOIN files f ON h.file_id = f.id
             WHERE h.file_type = 'session'
-            ORDER BY f.mtime DESC LIMIT 1
+            ORDER BY f.mtime DESC, f.id DESC LIMIT 1
         """
         row = cur.execute(sql_agent, (f"%{agent_filter}%",)).fetchone() if agent_filter else None
         if not row:

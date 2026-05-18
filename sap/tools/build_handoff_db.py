@@ -174,7 +174,7 @@ def kb_to_sqlite(conn: sqlite3.Connection) -> int:
                 WHERE category = 'handoff'
                   AND source_type = 'session'
                   AND invalid_at IS NULL
-                ORDER BY valid_at DESC
+                ORDER BY valid_at ASC
             """)
             rows = cur.fetchall()
     except Exception as e:
