@@ -241,6 +241,19 @@ CREATE TABLE IF NOT EXISTS hook_executions (
     status       TEXT NOT NULL DEFAULT 'pending',
     error        TEXT
 );
+
+CREATE TABLE IF NOT EXISTS policy_rules (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    rule_type   TEXT NOT NULL DEFAULT 'limit',
+    target      TEXT NOT NULL DEFAULT '*',
+    threshold   REAL,
+    window_sec  INTEGER DEFAULT 3600,
+    action      TEXT NOT NULL DEFAULT 'warn',
+    created_by  TEXT NOT NULL DEFAULT 'heimdallr',
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 # Columns added after initial deployment — safe to run repeatedly.
@@ -563,6 +576,67 @@ class PgBridge:
         except Exception:
             pass
         return result
+
+    # ── Policy rules ─────────────────────────────────────────────────────────
+
+    def policy_list(self, active_only: bool = True) -> list:
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            if active_only:
+                cur.execute(
+                    "SELECT id, name, rule_type, target, threshold, window_sec, action, created_by, active, created_at"
+                    " FROM policy_rules WHERE active = true ORDER BY created_at DESC"
+                )
+            else:
+                cur.execute(
+                    "SELECT id, name, rule_type, target, threshold, window_sec, action, created_by, active, created_at"
+                    " FROM policy_rules ORDER BY created_at DESC"
+                )
+            cols = ["id", "name", "rule_type", "target", "threshold", "window_sec",
+                    "action", "created_by", "active", "created_at"]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def policy_put(self, name: str, rule_type: str = "limit", target: str = "*",
+                   action: str = "warn", threshold: Optional[float] = None,
+                   window_sec: int = 3600, created_by: str = "heimdallr") -> str:
+        self._ensure_conn()
+        rule_id = self.gen_id(8)
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO policy_rules (id, name, rule_type, target, threshold, window_sec, action, created_by)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (name) DO UPDATE SET"
+                " rule_type=%s, target=%s, threshold=%s, window_sec=%s, action=%s, active=true",
+                (rule_id, name, rule_type, target, threshold, window_sec, action, created_by,
+                 rule_type, target, threshold, window_sec, action),
+            )
+        self.conn.commit()
+        return rule_id
+
+    def policy_delete(self, rule_id: str) -> bool:
+        self._ensure_conn()
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE policy_rules SET active = false WHERE id = %s OR name = %s",
+                        (rule_id, rule_id))
+            affected = cur.rowcount
+        self.conn.commit()
+        return affected > 0
+
+    def policy_check(self, tool_name: str, app_id: str) -> tuple:
+        """Returns (action, rule_name): action is 'ok', 'warn', or 'block'.
+        Checks only block/warn rules — limit rules require receipt count (done in middleware)."""
+        try:
+            rules = self.policy_list(active_only=True)
+        except Exception:
+            return ("ok", None)
+        for rule in rules:
+            if rule.get("rule_type") == "limit":
+                continue  # limit rules checked in middleware with receipt count
+            target = rule.get("target", "*")
+            if target != "*" and target != tool_name:
+                continue
+            return (rule.get("action", "warn"), rule.get("name", "unknown"))
+        return ("ok", None)
 
     # ── Knowledge ────────────────────────────────────────────────────────────
 

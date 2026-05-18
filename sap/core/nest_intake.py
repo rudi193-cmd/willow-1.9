@@ -14,7 +14,7 @@ from pathlib import Path
 
 NEST_DIRS = [
     Path.home() / "Desktop" / "Nest",
-    Path.home() / "Ashokoa" / "Nest" / "processed",
+    Path.home() / ".willow" / "Nest" / "processed",
 ]
 
 QUEUE_FILE = Path.home() / ".willow" / "nest-queue.json"
@@ -28,9 +28,9 @@ TRACK_TO_DEST = {
     "photos_personal": Path.home() / "personal" / "photos" / "personal",
     "photos_camera":   Path.home() / "personal" / "photos" / "camera",
     "screenshots":     Path.home() / "personal" / "photos" / "screenshots",
-    # Agent artifacts — ~/Ashokoa/
-    "handoffs":        Path.home() / "Ashokoa" / "Filed" / "reference" / "handoffs",
-    "specs":           Path.home() / "Ashokoa" / "Filed" / "specs",
+    # Agent artifacts — ~/.willow/
+    "handoffs":        Path.home() / ".willow" / "handoffs" / "filed",
+    "specs":           Path.home() / ".willow" / "specs",
 }
 
 

@@ -17,11 +17,13 @@ from typing import Callable
 
 _LOG_LOCK = threading.Lock()
 
+_REPO_ROOT   = Path(__file__).parent
+_VENV_DEV    = _REPO_ROOT / ".venv-dev" / "bin" / "python3"
 _VENV_PYTHON = Path.home() / ".willow-venv" / "bin" / "python3"
 _SYS_PYTHON  = "/usr/bin/python3"
 _AGENTS_BIN  = Path.home() / "agents" / "hanuman" / "bin"
 _GROVE_DIR   = Path(__file__).parent
-_PY          = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else _SYS_PYTHON
+_PY          = str(_VENV_DEV) if _VENV_DEV.exists() else (str(_VENV_PYTHON) if _VENV_PYTHON.exists() else _SYS_PYTHON)
 _LOG_FILE    = Path.home() / ".willow" / "fleet.log"
 _PID_FILE    = Path.home() / ".willow" / "grove.pid"
 

@@ -216,16 +216,11 @@ STORE_ROOT = os.environ.get("WILLOW_STORE_ROOT", str(_SAP_ROOT / "store"))
 _MCP_AGENT = require_agent_name()
 HANDOFF_DB = os.environ.get(
     "WILLOW_HANDOFF_DB",
-    str(Path.home() / "Ashokoa" / "agents" / _MCP_AGENT / "index" / "haumana_handoffs" / "handoffs.db"),
+    str(Path.home() / ".willow" / "handoffs" / _MCP_AGENT / "handoffs.db"),
 )
 _DEFAULT_HANDOFF_DIRS = ":".join([
-    str(Path.home() / "Ashokoa" / "agents" / _MCP_AGENT / "index" / "haumana_handoffs"),
+    str(Path.home() / ".willow" / "handoffs" / _MCP_AGENT),
     str(Path.home() / ".willow" / "Nest" / _MCP_AGENT),
-    str(Path.home() / "Ashokoa" / "Filed" / "reference" / "willow-artifacts" / "documents"),
-    str(Path.home() / "Ashokoa" / "Filed" / "reference" / "handoffs"),
-    str(Path.home() / "Ashokoa" / "Filed" / "narrative" / "session-log"),
-    "+" + str(Path.home() / "Ashokoa" / "corpus"),
-    "+" + str(Path.home() / "github" / "die-namic-system" / "docs"),
 ])
 HANDOFF_DIRS = os.environ.get("WILLOW_HANDOFF_DIRS", _DEFAULT_HANDOFF_DIRS)
 
@@ -2101,7 +2096,7 @@ def _call_tool_sync(name: str, arguments: dict) -> list[types.TextContent]:
         elif name == "willow_handoff_rebuild":
             import subprocess
             # Prefer the canonical repo script; fall back to agent-local copy.
-            _canonical = _SAP_ROOT / "tools" / "build_handoff_db.py"
+            _canonical = Path(__file__).parent / "tools" / "build_handoff_db.py"
             _local = Path(HANDOFF_DB).parent / "build_handoff_db.py"
             build_script = str(_canonical) if _canonical.exists() else str(_local)
             if not Path(build_script).exists():

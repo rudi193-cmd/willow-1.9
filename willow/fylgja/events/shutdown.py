@@ -426,7 +426,6 @@ def main():
     run_edge_linking()       # Phase 4: connect atoms into graph
     run_hook_pipeline(run_id=session_id)  # Phase 5: run registered hooks with isolation
     run_feedback_pipeline()
-    run_handoff_rebuild()
 
     if session_id:
         try:
@@ -436,6 +435,8 @@ def main():
             pass
         close_session(session_id)
         run_ingot(session_id)
+
+    run_handoff_rebuild()  # must run after write_flat_handoff so DB includes current session
 
     try:
         from core.run_ledger import close_run

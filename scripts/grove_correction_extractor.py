@@ -14,7 +14,7 @@ Usage:
         --channel general \
         --since-id 6400 \
         --until-id 9999 \
-        --output ~/github/yggdrasil-training-data/corrections/grove_20260429.jsonl
+        --output ~/yggdrasil-training-data/corrections/grove_20260429.jsonl
 """
 import argparse
 import json

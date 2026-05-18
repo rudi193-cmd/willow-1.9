@@ -17,7 +17,7 @@ Server discovery order:
     1. WILLOW_MCP_CMD env var (full command string)
     2. WILLOW_ROOT env var → {WILLOW_ROOT}/willow.sh
     3. ~/.willow-root symlink → willow.sh  (willow-seed install convention)
-    4. ~/github/willow-1.9/willow.sh  (dev fallback)
+    4. ~/willow-1.9/willow.sh  (dev fallback)
 """
 
 import asyncio

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Build handoff.db — SQLite index of the Haumana Handoffs folder.
+Build handoff.db — SQLite index of session handoffs.
+Sources: (1) markdown files in WILLOW_HANDOFF_DIRS; (2) KB atoms in Postgres
+(category='handoff', source_type='session').
 Reads WILLOW_HANDOFF_DIRS (colon-separated) and WILLOW_HANDOFF_DB from env.
-Weekly temp. Run to rebuild from scratch.
 """
 
 import os
@@ -155,7 +156,93 @@ def parse_session_handoff(content: str, filename: str = "") -> dict:
     return result
 
 
+def kb_to_sqlite(conn: sqlite3.Connection) -> int:
+    """Pull session handoff atoms from Postgres and insert into SQLite. Returns row count."""
+    try:
+        from core.pg_bridge import get_connection, release_connection
+    except Exception:
+        return 0
+
+    pg_conn = None
+    count = 0
+    try:
+        pg_conn = get_connection()
+        with pg_conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, summary, content, valid_at
+                FROM knowledge
+                WHERE category = 'handoff'
+                  AND source_type = 'session'
+                  AND invalid_at IS NULL
+                ORDER BY valid_at ASC
+            """)
+            rows = cur.fetchall()
+    except Exception as e:
+        print(f"  [kb] Postgres query failed: {e}")
+        return 0
+    finally:
+        if pg_conn:
+            try:
+                release_connection(pg_conn)
+            except Exception:
+                pass
+
+    cur_sql = conn.cursor()
+    for atom_id, title, summary, content_raw, valid_at in rows:
+        content = content_raw if isinstance(content_raw, dict) else {}
+        if isinstance(content_raw, str):
+            try:
+                content = json.loads(content_raw)
+            except Exception:
+                content = {}
+
+        # Synthesise a stable virtual filename so deduplication across runs works
+        virtual_name = f"kb_{atom_id}.json"
+        virtual_path = f"kb://{atom_id}"
+        mtime = valid_at.isoformat() if hasattr(valid_at, "isoformat") else str(valid_at)
+
+        cur_sql.execute(
+            "INSERT OR IGNORE INTO files (filename, filepath, file_type, file_size, mtime)"
+            " VALUES (?,?,?,?,?)",
+            (virtual_name, virtual_path, "session", len(summary or ""), mtime),
+        )
+        file_id = cur_sql.lastrowid
+        if not file_id:
+            continue
+
+        def _jdump(v) -> str | None:
+            if v is None:
+                return None
+            if isinstance(v, (list, dict)):
+                return json.dumps(v)
+            return str(v)
+
+        cur_sql.execute("""
+            INSERT OR IGNORE INTO handoffs
+                (file_id, file_type, session_id, handoff_date,
+                 turns, tools_used, last_messages, key_actions,
+                 open_threads, questions, summary, raw_content)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            file_id, "session",
+            atom_id,
+            content.get("handoff_date") or mtime[:10],
+            content.get("turns"),
+            _jdump(content.get("tools_used")),
+            _jdump(content.get("last_messages")),
+            _jdump(content.get("key_actions")),
+            _jdump(content.get("open_threads")),
+            _jdump(content.get("next_steps")),
+            content.get("summary") or summary,
+            json.dumps({"id": atom_id, "title": title, "summary": summary, **content}),
+        ))
+        count += 1
+    conn.commit()
+    return count
+
+
 def build_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     if DB_PATH.exists():
         DB_PATH.unlink()
     conn = sqlite3.connect(DB_PATH)
@@ -238,10 +325,15 @@ def build_db():
             ))
             handoff_count += 1
     conn.commit()
+
+    # Second pass: KB atoms from Postgres
+    kb_count = kb_to_sqlite(conn)
+
     conn.close()
     print(f"Built {DB_PATH.name}")
     print(f"  {file_count} files indexed")
     print(f"  {handoff_count} handoffs parsed")
+    print(f"  {kb_count} KB atoms ingested")
     print(f"  DB size: {DB_PATH.stat().st_size / 1024:.1f} KB")
     print(f"  Dirs scanned: {[str(d) for d in SCAN_DIRS if d.exists()]}")
 

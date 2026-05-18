@@ -107,7 +107,7 @@ python3 sap/sap_mcp.py --http --host 0.0.0.0 --port 5000
 
 For systemd, edit `willow-mcp.service` and change ExecStart:
 ```
-ExecStart=%h/.willow-venv/bin/python3 %h/github/willow-1.9/sap/sap_mcp.py --http --port 5000
+ExecStart=%h/willow-1.9/.venv-dev/bin/python3 %h/willow-1.9/sap/sap_mcp.py --http --port 5000
 ```
 
 ## Troubleshooting

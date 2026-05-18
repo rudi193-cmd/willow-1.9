@@ -77,6 +77,7 @@ PERMISSION_GROUPS: dict[str, frozenset] = {
         "fleet_agents", "fleet_status", "fleet_system_status",
         "fleet_governance", "mem_check",
         "handoff_latest", "handoff_search",
+        "session_review", "diagnostic_summary", "env_check",
     }),
     "knowledge_write": frozenset({
         "kb_ingest", "kb_journal",
@@ -86,6 +87,7 @@ PERMISSION_GROUPS: dict[str, frozenset] = {
     }),
     "local_llm": frozenset({
         "infer_chat", "fleet_persona", "agent_route", "infer_speak",
+        "voice_keyterms", "session_review", "infer_7b",
     }),
     "cloud_llm_free": frozenset({
         "infer_chat",
@@ -124,6 +126,7 @@ PERMISSION_GROUPS: dict[str, frozenset] = {
         "handoff_latest", "handoff_search",
         "soil_get", "soil_search", "soil_list", "soil_search_all",
         "soil_edges_for", "soil_stats", "soil_audit",
+        "session_review", "diagnostic_summary", "env_check",
     }),
     # SAP MCP 2.0 — new groups covering domains not in v1
     "fork_manage": frozenset({
@@ -147,6 +150,7 @@ PERMISSION_GROUPS: dict[str, frozenset] = {
         "fleet_health", "fleet_blast",
         "fleet_governance", "fleet_persona", "fleet_base17",
         "fleet_reload", "fleet_restart",
+        "policy_put", "policy_list", "policy_delete",
     }),
 }
 

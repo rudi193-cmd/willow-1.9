@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-HANDOFF_DIR = Path.home() / ".willow" / "handoffs"
+_HANDOFF_ROOT = Path.home() / ".willow" / "handoffs"
 
 
 def _find_jsonl(session_id: str) -> tuple[Path | None, str]:
@@ -45,7 +45,7 @@ def _extract_last_user_message(jsonl_path: Path) -> str:
         for line in reversed(lines):
             try:
                 entry = json.loads(line)
-                if entry.get("role") == "user":
+                if entry.get("type") == "user" or entry.get("role") == "user":
                     content = entry.get("message", {}).get("content", "")
                     if isinstance(content, str) and content.strip():
                         return content.strip()[:200]
@@ -84,9 +84,10 @@ def _get_open_gates(agent: str) -> list[str]:
 def write_flat_handoff(session_id: str, agent: str) -> Path | None:
     """Write a flat verifiable handoff file. Returns path written or None on failure."""
     try:
-        HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
+        agent_dir = _HANDOFF_ROOT / agent
+        agent_dir.mkdir(parents=True, exist_ok=True)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        path = HANDOFF_DIR / f"{agent}-{today}.md"
+        path = agent_dir / f"session_handoff-{today}.md"
 
         jsonl_path, runtime = _find_jsonl(session_id)
         anchor = _extract_last_user_message(jsonl_path) if jsonl_path else ""
@@ -133,7 +134,12 @@ def read_flat_handoff(agent: str) -> dict:
         "written_at": "", "runtime": "", "path": "",
     }
     try:
-        files = sorted(HANDOFF_DIR.glob(f"{agent}-*.md"), reverse=True)
+        agent_dir = _HANDOFF_ROOT / agent
+        # New location: ~/.willow/handoffs/{agent}/session_handoff-*.md
+        # Backward compat: ~/.willow/handoffs/{agent}-*.md
+        new_files = sorted(agent_dir.glob("session_handoff-*.md"), reverse=True) if agent_dir.exists() else []
+        old_files = sorted(_HANDOFF_ROOT.glob(f"{agent}-*.md"), reverse=True)
+        files = new_files or old_files
         if not files:
             return result
         result["path"] = str(files[0])
