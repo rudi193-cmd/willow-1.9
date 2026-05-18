@@ -7,7 +7,7 @@ from willow.fylgja.safety.platform import check_all, HardStop
 
 def test_hs001_blocks_training_write_for_child():
     result = check_all(
-        tool_name="mcp__willow__opus_feedback_write",
+        tool_name="mcp__willow__index_feedback_write",
         tool_input={"app_id": "hanuman"},
         user_role="child",
         training_consented=False,
@@ -19,7 +19,7 @@ def test_hs001_blocks_training_write_for_child():
 
 def test_hs001_allows_training_write_for_adult_with_consent():
     result = check_all(
-        tool_name="mcp__willow__opus_feedback_write",
+        tool_name="mcp__willow__index_feedback_write",
         tool_input={"app_id": "hanuman"},
         user_role="adult",
         training_consented=True,
@@ -54,7 +54,7 @@ def test_hs002_allows_clean_bash():
 
 def test_hs003_blocks_training_without_consent():
     result = check_all(
-        tool_name="mcp__willow__opus_feedback_write",
+        tool_name="mcp__willow__index_feedback_write",
         tool_input={"app_id": "hanuman"},
         user_role="adult",
         training_consented=False,
@@ -65,7 +65,7 @@ def test_hs003_blocks_training_without_consent():
 
 def test_hs003_allows_training_with_consent():
     result = check_all(
-        tool_name="mcp__willow__opus_feedback_write",
+        tool_name="mcp__willow__index_feedback_write",
         tool_input={"app_id": "hanuman"},
         user_role="adult",
         training_consented=True,
@@ -77,7 +77,7 @@ def test_hs003_allows_training_with_consent():
 
 def test_hs006_blocks_behavioral_profile_write():
     result = check_all(
-        tool_name="mcp__willow__store_put",
+        tool_name="mcp__willow__soil_put",
         tool_input={
             "app_id": "hanuman",
             "collection": "willow/behavioral_profiles",
@@ -92,7 +92,7 @@ def test_hs006_blocks_behavioral_profile_write():
 
 def test_hs006_allows_normal_store_put():
     result = check_all(
-        tool_name="mcp__willow__store_put",
+        tool_name="mcp__willow__soil_put",
         tool_input={
             "app_id": "hanuman",
             "collection": "hanuman/feedback",
@@ -143,7 +143,7 @@ def test_clean_read_passes_all_stops():
 
 def test_block_result_has_required_fields():
     result = check_all(
-        tool_name="mcp__willow__opus_feedback_write",
+        tool_name="mcp__willow__index_feedback_write",
         tool_input={"app_id": "hanuman"},
         user_role="child",
         training_consented=False,

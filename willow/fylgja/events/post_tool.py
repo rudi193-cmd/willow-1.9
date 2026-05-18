@@ -35,7 +35,7 @@ _RATE_WINDOW = 60  # seconds
 
 _SIGNIFICANT = {
     "Edit", "Write",
-    "store_put", "store_update",
+    "mcp__willow__soil_put", "mcp__willow__soil_update",
     "mcp__willow__soil_add_edge",
     "mcp__willow__kb_ingest",
     "mcp__willow__kb_at",
@@ -54,7 +54,7 @@ _AGENT = require_agent_name()
 def _target_from_input(tool_name: str, tool_input: dict) -> str:
     if tool_name in ("Edit", "Write"):
         return tool_input.get("file_path", "")[:120]
-    if tool_name in ("store_put", "store_update"):
+    if tool_name in ("mcp__willow__soil_put", "mcp__willow__soil_update"):
         return tool_input.get("collection", "")[:80]
     if tool_name == "mcp__willow__soil_add_edge":
         return f"{tool_input.get('from_id','')}→{tool_input.get('to_id','')}"
@@ -71,8 +71,8 @@ def _summary_from(tool_name: str, target: str) -> str:
     verbs = {
         "Edit": "edited",
         "Write": "wrote",
-        "store_put": "stored atom in",
-        "store_update": "updated atom in",
+        "mcp__willow__soil_put": "stored atom in",
+        "mcp__willow__soil_update": "updated atom in",
         "mcp__willow__soil_add_edge": "added edge",
         "mcp__willow__kb_ingest": "ingested KB atom",
         "mcp__willow__kb_at": "replayed KB at",

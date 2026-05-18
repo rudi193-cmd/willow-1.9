@@ -10,9 +10,9 @@ from typing import Optional
 
 # Training pipeline tools — gated by HS-001 (child) and HS-003 (consent)
 _TRAINING_TOOLS = frozenset({
-    "mcp__willow__opus_feedback_write",
-    "mcp__willow__opus_ingest",
-    "mcp__willow__opus_feedback",
+    "mcp__willow__index_feedback_write",
+    "mcp__willow__index_ingest",
+    "mcp__willow__index_feedback",
 })
 
 # Mass harm content patterns — HS-002

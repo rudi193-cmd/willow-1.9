@@ -80,7 +80,7 @@ def _run_pre_tool(stdin_data: dict) -> str:
 
 def test_safety_gate_blocks_training_tool_without_consent():
     out = _run_pre_tool({
-        "tool_name": "mcp__willow__opus_feedback_write",
+        "tool_name": "mcp__willow__index_feedback_write",
         "tool_input": {"app_id": "hanuman"},
         "session_id": "abc123",
     })
