@@ -30,7 +30,7 @@ def build_hooks_block(package_root: Path) -> dict:
              "hooks": [{"type": "command", "command": cmd("pre_tool"), "timeout": 5}]},
             {"matcher": "Read",
              "hooks": [{"type": "command", "command": cmd("pre_tool"), "timeout": 5}]},
-            {"matcher": "mcp__willow__store_put|mcp__willow__store_update|mcp__willow__willow_knowledge_ingest|mcp__willow__willow_ratify",
+            {"matcher": "mcp__willow__soil_put|mcp__willow__soil_update|mcp__willow__kb_ingest|mcp__willow__mem_ratify",
              "hooks": [{"type": "command", "command": cmd("pre_tool"), "timeout": 5}]},
         ],
         "UserPromptSubmit": [

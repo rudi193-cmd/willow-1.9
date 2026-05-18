@@ -1,5 +1,5 @@
 # Willow MCP — Onboarding
-b17: SEED1
+b20: SAPMCP2  ΔΣ=42
 
 You are connected to Willow, a local-first AI memory and task system built for Sean Campbell's agent fleet. Before doing anything else, orient.
 
@@ -8,21 +8,28 @@ You are connected to Willow, a local-first AI memory and task system built for S
 Call these in parallel:
 
 ```
-willow_status          → system health (Postgres + SOIL + Ollama)
-willow_handoff_latest  → last session state — what was in-flight, what's pending
+fleet_status      → system health (Postgres + SOIL + Ollama)
+handoff_latest    → last session state — what was in-flight, what's pending
 ```
 
-If `willow_status` returns degraded or down: surface it and stop. Do not proceed.
+If `fleet_status` returns degraded or down: surface it and stop. Do not proceed.
 
 ## Tool groups
 
 | Group | Tools | Purpose |
 |-------|-------|---------|
-| KB | `willow_knowledge_search`, `willow_knowledge_ingest` | Long-term knowledge atoms |
-| Store | `store_get`, `store_put`, `store_search`, `store_list` | Structured local records (SOIL) |
+| KB | `kb_search`, `kb_ingest`, `kb_get`, `kb_query`, `kb_at` | Long-term knowledge atoms |
+| SOIL | `soil_get`, `soil_put`, `soil_search`, `soil_list`, `soil_update` | Structured local records |
+| Fleet | `fleet_status`, `fleet_health`, `fleet_agents`, `fleet_system_status` | System health + agent registry |
 | Grove | `grove_send_message`, `grove_get_history`, `grove_get_thread` | Agent messaging bus |
-| Tasks | `willow_task_submit`, `willow_task_list`, `willow_task_status` | Kart queue |
-| Ops | `willow_dispatch`, `willow_route`, `willow_speak` | Agent operations |
+| Tasks | `agent_task_submit`, `agent_task_list`, `agent_task_status` | Kart queue |
+| Ops | `agent_dispatch`, `agent_route`, `infer_speak` | Agent operations |
+| Memory | `mem_check`, `mem_ratify`, `mem_jeles_extract` | Memory gate + Jeles |
+| Handoffs | `handoff_latest`, `handoff_search` | Session continuity |
+| Ledger | `ledger_read`, `ledger_write` | FRANK audit chain |
+| Forks | `fork_status`, `fork_list`, `fork_create` | Worktree management |
+| Index | `index_search`, `index_feedback` | Opus knowledge index |
+| Inference | `infer_chat`, `infer_speak`, `infer_imagine` | LLM calls |
 
 ## Pull before push
 
@@ -40,9 +47,9 @@ You are one agent in a coordinated fleet. The work was in progress before this s
 
 ## Naming conventions
 
-- KB atoms use `willow_knowledge_search` — search before ingesting, avoid duplicates
+- KB atoms: `kb_search` before `kb_ingest` — avoid duplicates
 - Collections follow `agent/topic` pattern (e.g., `hanuman/tasks`, `hanuman/flags`)
-- Tasks submitted to Kart via `willow_task_submit` with a full shell command
+- Tasks submitted to Kart via `agent_task_submit` with a full shell command
 - Grove channels: `general`, `architecture`, `handoffs`, `alerts`
 
 ## One rule

@@ -10,9 +10,9 @@ from typing import Optional
 
 # Training pipeline tools — gated by HS-001 (child) and HS-003 (consent)
 _TRAINING_TOOLS = frozenset({
-    "mcp__willow__opus_feedback_write",
-    "mcp__willow__opus_ingest",
-    "mcp__willow__opus_feedback",
+    "mcp__willow__index_feedback_write",
+    "mcp__willow__index_ingest",
+    "mcp__willow__index_feedback",
 })
 
 # Mass harm content patterns — HS-002
@@ -74,7 +74,7 @@ def _check_hs003(tool_name: str, training_consented: bool) -> Optional[dict]:
 
 
 def _check_hs006(tool_name: str, tool_input: dict) -> Optional[dict]:
-    if tool_name in ("mcp__willow__store_put", "mcp__willow__store_update"):
+    if tool_name in ("mcp__willow__soil_put", "mcp__willow__soil_update"):
         collection = tool_input.get("collection", "")
         if collection in _SURVEILLANCE_COLLECTIONS:
             return _block(

@@ -58,68 +58,95 @@ _APP_ID_RE = _re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$')
 # Maps semantic permission strings (as declared in safe-app-manifest.json)
 # to the set of tool names they grant. Fail-closed: any tool not covered → deny.
 PERMISSION_GROUPS: dict[str, frozenset] = {
+    # SAP MCP 2.0 tool names (soil_ prefix replaces store_, new prefixes throughout)
     "store_read": frozenset({
-        "store_get", "store_search", "store_list", "store_search_all",
-        "store_edges_for", "store_stats", "store_audit",
+        "soil_get", "soil_search", "soil_list", "soil_search_all",
+        "soil_edges_for", "soil_stats", "soil_audit",
     }),
     "store_write": frozenset({
-        "store_put", "store_update", "store_delete", "store_add_edge",
+        "soil_put", "soil_update", "soil_delete", "soil_add_edge",
     }),
     "conversation_storage": frozenset({
-        "store_put", "store_get", "store_search", "store_list", "store_update",
+        "soil_put", "soil_get", "soil_search", "soil_list", "soil_update",
     }),
     "export_data": frozenset({
-        "store_list", "store_search_all",
+        "soil_list", "soil_search_all",
     }),
     "postgres_read": frozenset({
-        "willow_knowledge_search", "willow_query", "willow_agents",
-        "willow_status", "willow_system_status", "willow_governance",
-        "willow_memory_check", "willow_handoff_latest", "willow_handoff_search",
+        "kb_search", "kb_query", "kb_at", "kb_get",
+        "fleet_agents", "fleet_status", "fleet_system_status",
+        "fleet_governance", "mem_check",
+        "handoff_latest", "handoff_search",
     }),
     "knowledge_write": frozenset({
-        "willow_knowledge_ingest", "willow_journal",
+        "kb_ingest", "kb_journal",
     }),
     "safe_manifest_read": frozenset({
-        "willow_status", "willow_system_status",
+        "fleet_status", "fleet_system_status",
     }),
     "local_llm": frozenset({
-        "willow_chat", "willow_persona", "willow_route", "willow_speak",
+        "infer_chat", "fleet_persona", "agent_route", "infer_speak",
     }),
     "cloud_llm_free": frozenset({
-        "willow_chat",
+        "infer_chat",
     }),
     "task_submit": frozenset({
-        "willow_task_submit", "willow_task_status", "willow_task_list",
+        "agent_task_submit", "agent_task_status", "agent_task_list",
     }),
     "opus_read": frozenset({
-        "opus_search", "opus_feedback",
+        "index_search", "index_feedback",
     }),
     "opus_write": frozenset({
-        "opus_ingest", "opus_feedback_write", "opus_journal",
+        "index_ingest", "index_feedback_write", "index_journal",
     }),
     "jeles_fetch": frozenset({
-        "jeles_fetch", "jeles_sources",
+        "mem_jeles_extract", "mem_jeles_register",
     }),
     "nest": frozenset({
-        "willow_nest_scan", "willow_nest_queue", "willow_nest_file",
+        "nest_scan", "nest_queue", "nest_file",
     }),
     "pipeline": frozenset({
-        "willow_agent_create", "willow_jeles_register", "willow_jeles_extract",
-        "willow_binder_file", "willow_binder_edge", "willow_ratify",
-        "willow_base17", "willow_handoff_rebuild", "willow_reload",
-        "willow_restart_server",
+        "agent_create",
+        "mem_jeles_register", "mem_jeles_extract",
+        "mem_binder_file", "mem_binder_edge", "mem_ratify",
+        "fleet_base17", "handoff_rebuild",
+        "fleet_reload", "fleet_restart",
     }),
     "image_gen": frozenset({
-        "willow_imagine",
+        "infer_imagine",
     }),
     # Combined read: postgres_read + store_read + safe_manifest_read.
     # Used by SAFE partition manifests (e.g. Willow-dashboard).
     "willow_kb_read": frozenset({
-        "willow_knowledge_search", "willow_query", "willow_agents",
-        "willow_status", "willow_system_status", "willow_governance",
-        "willow_memory_check", "willow_handoff_latest", "willow_handoff_search",
-        "store_get", "store_search", "store_list", "store_search_all",
-        "store_edges_for", "store_stats", "store_audit",
+        "kb_search", "kb_query", "kb_at", "kb_get",
+        "fleet_agents", "fleet_status", "fleet_system_status",
+        "fleet_governance", "mem_check",
+        "handoff_latest", "handoff_search",
+        "soil_get", "soil_search", "soil_list", "soil_search_all",
+        "soil_edges_for", "soil_stats", "soil_audit",
+    }),
+    # SAP MCP 2.0 — new groups covering domains not in v1
+    "fork_manage": frozenset({
+        "fork_create", "fork_delete", "fork_join",
+        "fork_list", "fork_log", "fork_merge", "fork_status",
+    }),
+    "skill_manage": frozenset({
+        "skill_list", "skill_load", "skill_put",
+    }),
+    "ledger_read_perm": frozenset({
+        "ledger_read",
+    }),
+    "ledger_write_perm": frozenset({
+        "ledger_write",
+    }),
+    "agent_dispatch": frozenset({
+        "agent_dispatch", "agent_dispatch_result", "agent_route",
+        "agent_task_submit", "agent_task_status", "agent_task_list",
+    }),
+    "fleet_admin": frozenset({
+        "fleet_health", "fleet_blast",
+        "fleet_governance", "fleet_persona", "fleet_base17",
+        "fleet_reload", "fleet_restart",
     }),
 }
 
@@ -397,6 +424,7 @@ def permitted(app_id: str, tool_name: str) -> bool:
         or _resolve_dev_app_path(app_id)
     )
     if app_path is None:
+        _log_gap(app_id, f"permitted(): no SAFE folder found for {app_id!r} — tool={tool_name!r}")
         return False
 
     try:

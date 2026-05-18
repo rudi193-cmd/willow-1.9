@@ -76,9 +76,9 @@ _AUDIT_ALLOW_PATTERNS = [
 ]
 
 F5_PROSE_TOOLS = {
-    "mcp__willow__store_put": "record",
-    "mcp__willow__store_update": "record",
-    "mcp__willow__willow_knowledge_ingest": "content",
+    "mcp__willow__soil_put": "record",
+    "mcp__willow__soil_update": "record",
+    "mcp__willow__kb_ingest": "content",
 }
 
 FLEET_CHANNEL_MAX_CHARS = 400
@@ -117,8 +117,8 @@ def check_bash_block(command: str) -> str | None:
 
 def check_agent_block(subagent_type: str) -> str | None:
     if subagent_type == "Explore":
-        return ("Explore subagent is blocked. Use MCP: store_search, willow_knowledge_search, "
-                "store_get, store_list — or Glob/Grep/Read directly.")
+        return ("Explore subagent is blocked. Use MCP: soil_search, kb_search, "
+                "soil_get, soil_list — or Glob/Grep/Read directly.")
     return None
 
 
