@@ -2477,11 +2477,17 @@ async def session_review(
 
         synthesis = ""
         try:
-            synthesis = _ask_ollama(
-                "mistral:7b",
-                "You are a session analyst. Write concise, actionable reviews.",
-                prompt,
-            ) or ""
+            import concurrent.futures as _cf
+            with _cf.ThreadPoolExecutor(max_workers=1) as _llm_ex:
+                _fut = _llm_ex.submit(
+                    _ask_ollama,
+                    "mistral:7b",
+                    "You are a session analyst. Write concise, actionable reviews.",
+                    prompt,
+                )
+                synthesis = _fut.result(timeout=60) or ""
+        except _cf.TimeoutError:
+            synthesis = "[review timed out — Ollama busy, retry later]"
         except Exception as e:
             synthesis = f"[review unavailable: {e}]"
 
