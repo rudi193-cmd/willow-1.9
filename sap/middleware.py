@@ -15,6 +15,7 @@ import asyncio
 import functools
 import json
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,6 +86,33 @@ except ImportError:
     _GLEIPNIR = False
     def _gleipnir_check(app_id: str, tool_name: str) -> tuple[bool, str]:
         return True, ""
+
+# ── Receipt writer ───────────────────────────────────────────────────────────
+try:
+    from core.pg_bridge import get_connection, release_connection
+    _PG_RECEIPTS = True
+except Exception:
+    _PG_RECEIPTS = False
+
+def _write_receipt(app_id: str, tool: str, ok: bool, latency_ms: int, error_type: str | None) -> None:
+    """Sync — always run in executor. Silently drops on any error."""
+    if not _PG_RECEIPTS:
+        return
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO willow.mcp_receipts (app_id, tool, ok, latency_ms, error_type)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (app_id, tool, ok, latency_ms, error_type),
+                )
+            conn.commit()
+        finally:
+            release_connection(conn)
+    except Exception:
+        pass
+
 
 # ── Memory sanitizer import ──────────────────────────────────────────────────
 try:
@@ -204,7 +232,16 @@ def sap_gate(*, write: bool = False):
                     return {"error": err}
 
             # 6. Dispatch
+            _t0 = time.monotonic()
             result = await fn(app_id=app_id, **kwargs)
+            _latency_ms = int((time.monotonic() - _t0) * 1000)
+
+            # Receipt — fire-and-forget, never blocks the response
+            _err_type = result.get("error") if isinstance(result, dict) else None
+            async def _emit_receipt(_aid=app_id, _tool=fn.__name__, _ok=_err_type is None,
+                                    _ms=_latency_ms, _et=_err_type):
+                await loop.run_in_executor(_executor, _write_receipt, _aid, _tool, _ok, _ms, _et)
+            asyncio.create_task(_emit_receipt())
 
             # 7. Result injection scan
             return await loop.run_in_executor(

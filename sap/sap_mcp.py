@@ -99,19 +99,11 @@ _MCP_AGENT = require_agent_name()
 STORE_ROOT = os.environ.get("WILLOW_STORE_ROOT", str(_SAP_ROOT / "store"))
 HANDOFF_DB = os.environ.get(
     "WILLOW_HANDOFF_DB",
-    str(
-        Path.home() / "Ashokoa" / "agents" / _MCP_AGENT
-        / "index" / "haumana_handoffs" / "handoffs.db"
-    ),
+    str(Path.home() / ".willow" / "handoffs" / _MCP_AGENT / "handoffs.db"),
 )
 _DEFAULT_HANDOFF_DIRS = ":".join([
-    str(Path.home() / "Ashokoa" / "agents" / _MCP_AGENT / "index" / "haumana_handoffs"),
+    str(Path.home() / ".willow" / "handoffs" / _MCP_AGENT),
     str(Path.home() / ".willow" / "Nest" / _MCP_AGENT),
-    str(Path.home() / "Ashokoa" / "Filed" / "reference" / "willow-artifacts" / "documents"),
-    str(Path.home() / "Ashokoa" / "Filed" / "reference" / "handoffs"),
-    str(Path.home() / "Ashokoa" / "Filed" / "narrative" / "session-log"),
-    "+" + str(Path.home() / "Ashokoa" / "corpus"),
-    "+" + str(Path.home() / "github" / "die-namic-system" / "docs"),
 ])
 HANDOFF_DIRS = os.environ.get("WILLOW_HANDOFF_DIRS", _DEFAULT_HANDOFF_DIRS)
 
@@ -813,17 +805,20 @@ async def kb_ingest(
     effective_domain = domain or _MCP_AGENT
 
     def _ingest():
+        retired: list[str] = []
         if not force:
             try:
                 from sap.core.memory_gate import check_candidate
+                from datetime import datetime, timezone
                 gate = check_candidate(
                     title=title, summary=clean_summary,
                     domain=effective_domain, store=store, pg=pg,
                     collection=f"{effective_domain}/atoms",
                 )
-                hard_flags = {"REDUNDANT", "CONTRADICTION"}
-                triggered  = hard_flags & set(gate.get("flags", []))
-                if triggered:
+                flags = set(gate.get("flags", []))
+
+                # REDUNDANT: exact duplicate — block.
+                if "REDUNDANT" in flags:
                     return {
                         "blocked":        True,
                         "flags":          gate["flags"],
@@ -831,6 +826,17 @@ async def kb_ingest(
                         "evidence":       gate["evidence"],
                         "hint":           "Pass force=true to override and write anyway.",
                     }
+
+                # CONTRADICTION: new atom supersedes old — retire old, proceed.
+                if "CONTRADICTION" in flags:
+                    now = datetime.now(timezone.utc)
+                    for old_id in gate.get("evidence", {}).get("contradiction_ids", []):
+                        try:
+                            pg.knowledge_close(old_id, now)
+                            retired.append(old_id)
+                        except Exception as retire_err:
+                            logger.warning("[w2] kb_ingest retire %s failed: %s", old_id, retire_err)
+
             except Exception as gate_err:
                 logger.warning("[w2] memory_gate check failed: %s", gate_err)
 
@@ -844,6 +850,8 @@ async def kb_ingest(
             out["error"] = getattr(pg, "_last_ingest_error", None)
         if force:
             out["forced"] = True
+        if retired:
+            out["retired"] = retired
         return out
 
     return await loop.run_in_executor(_executor, _ingest)
@@ -1751,7 +1759,7 @@ async def handoff_rebuild(app_id: str) -> dict:
 
     def _rebuild():
         import subprocess as _sp
-        canonical = _SAP_ROOT / "tools" / "build_handoff_db.py"
+        canonical = Path(__file__).parent / "tools" / "build_handoff_db.py"
         local     = Path(HANDOFF_DB).parent / "build_handoff_db.py"
         script    = str(canonical) if canonical.exists() else str(local)
         if not Path(script).exists():

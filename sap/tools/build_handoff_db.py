@@ -156,6 +156,7 @@ def parse_session_handoff(content: str, filename: str = "") -> dict:
 
 
 def build_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     if DB_PATH.exists():
         DB_PATH.unlink()
     conn = sqlite3.connect(DB_PATH)
