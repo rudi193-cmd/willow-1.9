@@ -2390,6 +2390,42 @@ async def voice_keyterms(
     return await loop.run_in_executor(_executor, _build)
 
 
+# ── Tools — infer_7b (orin sub-agent) ────────────────────────────────────────
+
+@mcp.tool()
+@sap_gate()
+async def infer_7b(
+    app_id:     str,
+    task_type:  str,
+    content:    str  = "",
+    context:    str  = "",
+    categories: list = None,
+    atom_a:     str  = "",
+    atom_b:     str  = "",
+) -> dict:
+    """Run a structured task via mistral:7b (orin sub-agent). Synchronous.
+    task_type: summarize | classify | extract | tension
+    - summarize: content → {bullets, one_line}
+    - classify:  content + categories → {category, confidence, reason}
+    - extract:   content → {atoms: [{title, summary, category}]}
+    - tension:   atom_a + atom_b → {conflict, score, reason}"""
+    logger.info("[w2] infer_7b app_id=%s task_type=%s", app_id, task_type)
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        from agents.orin.tasks import run as orin_run
+        payload: dict = {"content": content, "context": context}
+        if categories:
+            payload["categories"] = categories
+        if atom_a:
+            payload["atom_a"] = atom_a
+        if atom_b:
+            payload["atom_b"] = atom_b
+        return orin_run(task_type, payload)
+
+    return await loop.run_in_executor(_executor, _run)
+
+
 # ── Tools — session_review (S10) ─────────────────────────────────────────────
 
 @mcp.tool(annotations={"readOnlyHint": True})

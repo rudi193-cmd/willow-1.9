@@ -44,6 +44,7 @@ _GATE_DOWN_ALLOWED = frozenset({"fleet_status", "fleet_health"})
 _INFRA_IDS = frozenset({
     "heimdallr", "hanuman", "opus", "kart", "shiva", "ganesha",  # ENGINEER
     "willow", "ada", "steve",                                      # OPERATOR
+    "orin",                                                        # 7b batch processor
 })
 
 # Shared executor — PGP check, memory sanitizer, and sync tool dispatch

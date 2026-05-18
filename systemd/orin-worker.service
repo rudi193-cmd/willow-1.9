@@ -1,0 +1,18 @@
+[Unit]
+Description=Orin — mistral:7b batch processor sub-agent
+After=network.target postgresql.service willow-metabolic.socket
+
+[Service]
+Type=simple
+Environment=WILLOW_AGENT_NAME=orin
+EnvironmentFile=-%h/.willow/env
+ExecStart=%h/willow-1.9/.venv-dev/bin/python3 -m agents.orin.worker
+WorkingDirectory=%h/willow-1.9
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orin-worker
+
+[Install]
+WantedBy=default.target

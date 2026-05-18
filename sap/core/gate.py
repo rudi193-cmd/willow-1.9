@@ -87,7 +87,7 @@ PERMISSION_GROUPS: dict[str, frozenset] = {
     }),
     "local_llm": frozenset({
         "infer_chat", "fleet_persona", "agent_route", "infer_speak",
-        "voice_keyterms", "session_review",
+        "voice_keyterms", "session_review", "infer_7b",
     }),
     "cloud_llm_free": frozenset({
         "infer_chat",
