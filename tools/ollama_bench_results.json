@@ -1,0 +1,87 @@
+{
+  "run_at": "2026-05-17 20:19:57",
+  "models": {
+    "gemma2:9b": {
+      "A_startup": {
+        "ok": false,
+        "error": "timeout",
+        "elapsed": 120,
+        "score": "ERR"
+      },
+      "B_json": {
+        "ok": true,
+        "elapsed": 29.91,
+        "tokens": 27,
+        "prompt_tokens": 60,
+        "tps": 0.9,
+        "content": "{\"status\":\"ok\",\"ready\":true,\"model\":\"Gemma\",\"timestamp\":1690485732}",
+        "score": "PASS"
+      },
+      "C_reasoning": {
+        "ok": false,
+        "error": "timeout",
+        "elapsed": 120,
+        "score": "ERR"
+      },
+      "D_code": {
+        "ok": true,
+        "elapsed": 59.81,
+        "tokens": 68,
+        "prompt_tokens": 61,
+        "tps": 1.14,
+        "content": "```python\ndef group_by(records: list[dict], key: str) -> dict:\n  return {k: [record for record in records if k in record and record[k] == v] for k, v in [(item['id'], item['name']) for item in records]} \n```",
+        "score": "PASS"
+      },
+      "E_instruction": {
+        "ok": true,
+        "elapsed": 32.88,
+        "tokens": 35,
+        "prompt_tokens": 99,
+        "tps": 1.06,
+        "content": "* Local-first AI memory system running on your server.\n* Knowledge stored in Postgres with vector embeddings.\n* Agents share knowledge and communicate via Grove. \n\n\n",
+        "score": "PASS"
+      }
+    },
+    "llama3.2-vision:11b": {
+      "A_startup": {
+        "ok": true,
+        "elapsed": 78.58,
+        "tokens": 77,
+        "prompt_tokens": 101,
+        "tps": 0.98,
+        "content": "I'm not seeing any fleet status updates. It looks like the system is still online and healthy. The handoff_latest update indicates that there were no pending tasks or in-flight sessions from the previous session.\n\nHere's the current status:\n\n* Fleet status: **Online**\n* Handoff latest: **No pending tasks or in-flight sessions**\n\nWhat would you like to do next?",
+        "score": "PASS"
+      },
+      "B_json": {
+        "ok": true,
+        "elapsed": 24.28,
+        "tokens": 23,
+        "prompt_tokens": 64,
+        "tps": 0.95,
+        "content": "{\"status\":\"ok\",\"ready\":true,\"model\":\"json-only assistant\",\"timestamp\":1643723905}",
+        "score": "PASS"
+      },
+      "C_reasoning": {
+        "ok": false,
+        "error": "timeout",
+        "elapsed": 120,
+        "score": "ERR"
+      },
+      "D_code": {
+        "ok": false,
+        "error": "timeout",
+        "elapsed": 120,
+        "score": "ERR"
+      },
+      "E_instruction": {
+        "ok": true,
+        "elapsed": 52.66,
+        "tokens": 47,
+        "prompt_tokens": 102,
+        "tps": 0.89,
+        "content": "Here are 3 bullet points summarizing the text:\n\n\u2022 Willow runs on a home server, not the cloud.\n\u2022 Knowledge is stored in Postgres with vector embeddings.\n\u2022 AI agents share a knowledge base via Grove message bus.",
+        "score": "PASS"
+      }
+    }
+  }
+}

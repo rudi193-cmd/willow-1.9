@@ -124,6 +124,63 @@ store: WillowStore       = None  # type: ignore[assignment]
 
 # ── Startup helpers ───────────────────────────────────────────────────────────
 
+def _kill_stale_instances() -> None:
+    """Terminate other sap_mcp.py processes and their idle Postgres connections."""
+    import signal
+    import time
+    import psutil  # type: ignore[import]
+
+    my_pid = os.getpid()
+    stale_pids: list[int] = []
+
+    try:
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            if proc.info["pid"] == my_pid:
+                continue
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            if "sap_mcp" in cmdline or "sap.server" in cmdline:
+                stale_pids.append(proc.info["pid"])
+    except Exception as err:
+        logger.warning("[w2] stale instance scan failed: %s", err)
+        return
+
+    for pid in stale_pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            logger.info("[w2] sent SIGTERM to stale sap_mcp pid=%d", pid)
+        except ProcessLookupError:
+            pass
+        except Exception as err:
+            logger.warning("[w2] could not kill pid=%d: %s", pid, err)
+
+    if stale_pids:
+        time.sleep(1)
+        for pid in stale_pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
+
+        # Terminate any Postgres connections left behind by the stale processes.
+        try:
+            import psycopg2
+            pg_db = os.environ.get("WILLOW_PG_DB", "willow_19")
+            gc = psycopg2.connect(dbname=pg_db)
+            gc.autocommit = True
+            with gc.cursor() as c:
+                c.execute(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+                    " WHERE state IN ('idle in transaction', 'idle in transaction (aborted)')"
+                    "   AND pid != pg_backend_pid()"
+                )
+            gc.close()
+            logger.info("[w2] terminated stale Postgres connections from old instances")
+        except Exception as err:
+            logger.warning("[w2] pg cleanup after stale kill failed: %s", err)
+
+
 def _init_pg() -> "PgBridge | None":
     if PgBridge is None:
         return None
@@ -198,6 +255,7 @@ async def _lifespan(server: FastMCP) -> AsyncIterator[None]:
     global pg, store
 
     loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_executor, _kill_stale_instances)
     pg    = await loop.run_in_executor(_executor, _init_pg)
     store = WillowStore(STORE_ROOT)
 
@@ -1038,10 +1096,13 @@ async def infer_chat(app_id: str, agent: str = "willow", message: str = "") -> d
 
     def _chat():
         if agent in _inf.CLOUD_AGENTS:
-            response = _inf.chat_groq(agent, message) or _inf.chat_openrouter(agent, message)
-        else:
-            response = _inf.chat_codex(agent, message)
-        return response or f"[{agent}] Inference unavailable."
+            return (_inf.chat_groq(agent, message)
+                    or _inf.chat_openrouter(agent, message)
+                    or f"[{agent}] Inference unavailable.")
+        from sap.clients.professor_client import _ask_ollama, PROFESSOR_MODELS, DEFAULT_MODEL
+        model = PROFESSOR_MODELS.get(agent, DEFAULT_MODEL)
+        return (_ask_ollama(model, f"You are {agent}, a Willow AI agent.", message)
+                or f"[{agent}] Inference unavailable.")
 
     try:
         response = await asyncio.wait_for(

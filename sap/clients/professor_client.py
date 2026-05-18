@@ -47,7 +47,9 @@ UTETY_CHAT_ROOT = Path(os.environ.get(
 PERSONAS_PATH = UTETY_CHAT_ROOT / "personas.py"
 PROFESSOR_DATA_ROOT = UTETY_CHAT_ROOT / "data" / "professors"
 
-DEFAULT_MODEL = "qwen2.5:3b"
+DISPATCH_MODEL = "llama3.2:1b"   # fast tier — structured routing, short tasks
+DEFAULT_MODEL  = "llama3.2:3b"   # middle tier — general agents, 5/5 bench
+CHAT_MODEL     = "mistral:7b"    # top tier — reasoning, architecture, long-form
 
 # KB categories each professor draws from.
 PROFESSOR_DOMAINS: dict[str, list[str]] = {
@@ -93,23 +95,27 @@ PROFESSOR_SAFE_IDS: dict[str, str] = {
 }
 
 PROFESSOR_MODELS = {
-    "Oakenscroll": DEFAULT_MODEL,
-    "Riggs":       DEFAULT_MODEL,
+    # Dispatch tier — fast, structured, routing
+    "Kart":        DISPATCH_MODEL,
+    "Pigeon":      DISPATCH_MODEL,
+    "Binder":      DISPATCH_MODEL,
+    # Chat tier — reasoning, architecture, governance
+    "Oakenscroll": CHAT_MODEL,
+    "Ada":         CHAT_MODEL,
+    "Shiva":       CHAT_MODEL,
+    "Consus":      CHAT_MODEL,
+    "Riggs":       CHAT_MODEL,
+    # Default tier — general agents
     "Hanz":        DEFAULT_MODEL,
     "Nova":        DEFAULT_MODEL,
-    "Ada":         DEFAULT_MODEL,
     "Alexis":      DEFAULT_MODEL,
     "Ofshield":    DEFAULT_MODEL,
     "Gerald":      DEFAULT_MODEL,
-    "Kart":        DEFAULT_MODEL,
     "Mitra":       DEFAULT_MODEL,
-    "Consus":      DEFAULT_MODEL,
-    "Shiva":       DEFAULT_MODEL,
     "Steve":       DEFAULT_MODEL,
-    "Pigeon":      DEFAULT_MODEL,
-    "Binder":      DEFAULT_MODEL,
     "Jeles":       DEFAULT_MODEL,
     "Willow":      DEFAULT_MODEL,
+    "Jane":        DEFAULT_MODEL,
 }
 
 # Credentials live at the willow-1.7 root
