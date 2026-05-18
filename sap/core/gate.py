@@ -424,6 +424,7 @@ def permitted(app_id: str, tool_name: str) -> bool:
         or _resolve_dev_app_path(app_id)
     )
     if app_path is None:
+        _log_gap(app_id, f"permitted(): no SAFE folder found for {app_id!r} — tool={tool_name!r}")
         return False
 
     try:
