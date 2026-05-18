@@ -1038,10 +1038,13 @@ async def infer_chat(app_id: str, agent: str = "willow", message: str = "") -> d
 
     def _chat():
         if agent in _inf.CLOUD_AGENTS:
-            response = _inf.chat_groq(agent, message) or _inf.chat_openrouter(agent, message)
-        else:
-            response = _inf.chat_codex(agent, message)
-        return response or f"[{agent}] Inference unavailable."
+            return (_inf.chat_groq(agent, message)
+                    or _inf.chat_openrouter(agent, message)
+                    or f"[{agent}] Inference unavailable.")
+        from sap.clients.professor_client import _ask_ollama, PROFESSOR_MODELS, DEFAULT_MODEL
+        model = PROFESSOR_MODELS.get(agent, DEFAULT_MODEL)
+        return (_ask_ollama(model, f"You are {agent}, a Willow AI agent.", message)
+                or f"[{agent}] Inference unavailable.")
 
     try:
         response = await asyncio.wait_for(
