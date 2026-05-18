@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -167,6 +169,112 @@ def _sanitize_result(result, source_label: str):
     return result
 
 
+# ── Policy check (step 1.5) ──────────────────────────────────────────────────
+
+_POLICY_WARNS_LOG = Path(__file__).parent / "log" / "policy_warns.jsonl"
+_POLICY_CACHE_TTL = 60.0
+_policy_cache_lock = threading.Lock()
+_policy_cache_rules: list = []
+_policy_cache_ts: float = 0.0
+
+
+def _get_cached_policy_rules() -> list:
+    global _policy_cache_rules, _policy_cache_ts
+    with _policy_cache_lock:
+        if time.monotonic() - _policy_cache_ts < _POLICY_CACHE_TTL:
+            return list(_policy_cache_rules)
+    if not _PG_RECEIPTS:
+        return []
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT name, rule_type, target, action, threshold, window_sec"
+                    " FROM policy_rules WHERE active = true"
+                )
+                rules = [
+                    {"name": r[0], "rule_type": r[1], "target": r[2],
+                     "action": r[3], "threshold": r[4], "window_sec": r[5]}
+                    for r in (cur.fetchall() or [])
+                ]
+        finally:
+            release_connection(conn)
+        with _policy_cache_lock:
+            _policy_cache_rules = rules
+            _policy_cache_ts = time.monotonic()
+        return rules
+    except Exception:
+        return []
+
+
+def _count_receipts(tool_name: str, app_id: str, window_sec: int) -> int:
+    if not _PG_RECEIPTS:
+        return 0
+    try:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM willow.mcp_receipts"
+                    " WHERE tool = %s AND app_id = %s"
+                    " AND ts > now() - (%s * interval '1 second')",
+                    (tool_name, app_id, window_sec),
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+        finally:
+            release_connection(conn)
+    except Exception:
+        return 0
+
+
+def _policy_check_fn(app_id: str, tool_name: str) -> tuple:
+    """Returns (action, rule_name): 'ok'/'warn'/'block'."""
+    mock_env = os.environ.get("WILLOW_MOCK_POLICY")
+    if mock_env:
+        try:
+            rules = json.loads(mock_env)
+        except Exception:
+            rules = []
+    else:
+        rules = _get_cached_policy_rules()
+
+    for rule in rules:
+        if not rule.get("active", True):
+            continue
+        target = rule.get("target", "*")
+        if target != "*" and target != tool_name:
+            continue
+        rule_type = rule.get("rule_type", "block")
+        action = rule.get("action", "warn")
+        name = rule.get("name", "unknown")
+        if rule_type == "block":
+            return (action, name)
+        elif rule_type == "warn":
+            return ("warn", name)
+        elif rule_type == "limit":
+            threshold = rule.get("threshold") or 100
+            window_sec = rule.get("window_sec") or 3600
+            if _count_receipts(tool_name, app_id, window_sec) >= threshold:
+                return (action, name)
+    return ("ok", None)
+
+
+async def _emit_policy_warn(app_id: str, tool: str, rule_name: str) -> None:
+    try:
+        _POLICY_WARNS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        entry = json.dumps({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "app_id": app_id, "tool": tool,
+            "rule": rule_name, "event": "policy_warn",
+        })
+        with open(_POLICY_WARNS_LOG, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+    except Exception:
+        pass
+
+
 # ── @sap_gate decorator ──────────────────────────────────────────────────────
 
 def sap_gate(*, write: bool = False):
@@ -197,6 +305,15 @@ def sap_gate(*, write: bool = False):
                     "tool":    fn.__name__,
                     "message": "SAP gate failed to load — RESTRICTED mode. Only fleet_status and fleet_health are available.",
                 }
+
+            # 1.5. Policy check — runs before rate limit / auth
+            _p_action, _p_rule = await loop.run_in_executor(
+                _executor, _policy_check_fn, app_id, fn.__name__
+            )
+            if _p_action == "block":
+                return {"error": "policy_blocked", "rule": _p_rule, "tool": fn.__name__}
+            elif _p_action == "warn":
+                asyncio.create_task(_emit_policy_warn(app_id, fn.__name__, _p_rule))
 
             # 2. Gleipnir rate limit
             if _GLEIPNIR:

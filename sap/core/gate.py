@@ -147,6 +147,7 @@ PERMISSION_GROUPS: dict[str, frozenset] = {
         "fleet_health", "fleet_blast",
         "fleet_governance", "fleet_persona", "fleet_base17",
         "fleet_reload", "fleet_restart",
+        "policy_put", "policy_list", "policy_delete",
     }),
 }
 

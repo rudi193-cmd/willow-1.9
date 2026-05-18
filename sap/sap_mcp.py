@@ -114,6 +114,9 @@ _ONBOARDING = (Path(__file__).parent / "ONBOARDING.md").read_text(encoding="utf-
 pg:    "PgBridge | None" = None  # type: ignore[type-arg]
 store: WillowStore       = None  # type: ignore[assignment]
 
+# ── Module-level constants ────────────────────────────────────────────────────
+_ENV_SNAPSHOT_PREFIXES = ("WILLOW_", "GROVE_", "HOME", "USER", "PATH", "PGUSER", "PGHOST", "PGPORT")
+
 
 # ── Startup helpers ───────────────────────────────────────────────────────────
 
@@ -1171,6 +1174,13 @@ async def fork_create(
                 (fid, title, created_by, topic, _j.dumps([created_by])),
             )
             b.conn.commit()
+        # Snapshot env vars so env_check can diff against them later
+        env_snapshot = {k: v for k, v in os.environ.items()
+                        if any(k.startswith(p) for p in _ENV_SNAPSHOT_PREFIXES)}
+        try:
+            store.put(f"{app_id}/forks/{fid}/env", env_snapshot, record_id="snapshot")
+        except Exception:
+            pass
         return {"fork_id": fid, "status": "open"}
 
     return await loop.run_in_executor(_executor, _create)
@@ -2241,6 +2251,423 @@ async def agent_create(
         _executor, pg.agent_create,
         name, trust, role, folder_root or None,
     )
+
+
+# ── Tools — policy_ domain (S8) ──────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def policy_list(app_id: str, active_only: bool = True) -> dict:
+    """List all policy rules. Read-only — any fleet_admin agent may call this."""
+    logger.info("[w2] policy_list app_id=%s active_only=%s", app_id, active_only)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    rules = await loop.run_in_executor(_executor, pg.policy_list, active_only)
+    for r in rules:
+        if hasattr(r.get("created_at"), "isoformat"):
+            r["created_at"] = r["created_at"].isoformat()
+    return {"rules": rules, "count": len(rules)}
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def policy_put(
+    app_id:     str,
+    name:       str,
+    rule_type:  str   = "warn",
+    target:     str   = "*",
+    action:     str   = "warn",
+    threshold:  float = None,
+    window_sec: int   = 3600,
+) -> dict:
+    """Create or update a policy rule. Restricted to heimdallr.
+    rule_type: block | warn | limit
+    target: tool name or '*' for all tools
+    action: block | warn (what to do when rule fires)
+    threshold: for limit rules — max calls per window_sec"""
+    if app_id != "heimdallr":
+        return {"error": "not_permitted", "message": "policy_put is restricted to heimdallr"}
+    logger.info("[w2] policy_put app_id=%s name=%r rule_type=%s target=%s", app_id, name, rule_type, target)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    rule_id = await loop.run_in_executor(
+        _executor, pg.policy_put,
+        name, rule_type, target, action, threshold, window_sec, app_id,
+    )
+    # Invalidate middleware TTL cache so new rule takes effect immediately
+    from sap.middleware import _policy_cache_lock, _policy_cache_ts as _pts
+    import sap.middleware as _mw
+    with _policy_cache_lock:
+        _mw._policy_cache_ts = 0.0
+    return {"id": rule_id, "name": name, "status": "upserted"}
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def policy_delete(app_id: str, rule_id: str) -> dict:
+    """Deactivate a policy rule by ID or name. Restricted to heimdallr."""
+    if app_id != "heimdallr":
+        return {"error": "not_permitted", "message": "policy_delete is restricted to heimdallr"}
+    logger.info("[w2] policy_delete app_id=%s rule=%s", app_id, rule_id)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(_executor, pg.policy_delete, rule_id)
+    import sap.middleware as _mw
+    with _mw._policy_cache_lock:
+        _mw._policy_cache_ts = 0.0
+    return {"deactivated": ok, "rule_id": rule_id}
+
+
+# ── Tools — voice_ domain (S9) ────────────────────────────────────────────────
+
+def _split_identifier(name: str) -> list:
+    """Port of splitIdentifier() from services/voiceKeyterms.ts.
+    Splits camelCase, PascalCase, kebab-case, snake_case, and path segments."""
+    import re
+    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+    return [w.strip() for w in re.split(r"[-_./\s]+", s)
+            if 2 < len(w.strip()) <= 20]
+
+
+_VOICE_GLOBAL_TERMS = [
+    "MCP", "symlink", "grep", "regex", "localhost", "codebase",
+    "TypeScript", "JSON", "OAuth", "webhook", "gRPC", "dotfiles",
+    "subagent", "worktree", "Postgres", "Ollama", "mistral",
+    "heimdallr", "hanuman", "willow", "SOIL", "SAFE",
+]
+_MAX_KEYTERMS = 50
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def voice_keyterms(
+    app_id:       str,
+    recent_paths: list = None,
+) -> dict:
+    """Build STT keyterms for voice input accuracy.
+    Returns domain-specific vocabulary: global coding terms + project name + git branch + recent paths.
+    Ported from services/voiceKeyterms.ts (Claude Code source)."""
+    logger.info("[w2] voice_keyterms app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+
+    def _build():
+        import subprocess as _sp
+        from pathlib import Path as _P
+        from os.path import basename as _bn
+        terms: set = set(_VOICE_GLOBAL_TERMS)
+
+        # Project root basename
+        cwd = os.getcwd()
+        proj_name = _bn(cwd)
+        if 2 < len(proj_name) <= 50:
+            terms.add(proj_name)
+
+        # Git branch words
+        try:
+            branch = _sp.check_output(
+                ["git", "branch", "--show-current"],
+                cwd=cwd, stderr=_sp.DEVNULL, timeout=3,
+            ).decode().strip()
+            for w in _split_identifier(branch):
+                terms.add(w)
+        except Exception:
+            pass
+
+        # Recent file path words
+        for path in (recent_paths or []):
+            if len(terms) >= _MAX_KEYTERMS:
+                break
+            stem = _bn(path).rsplit(".", 1)[0]
+            for w in _split_identifier(stem):
+                terms.add(w)
+
+        keyterms = list(terms)[:_MAX_KEYTERMS]
+        return {"keyterms": keyterms, "count": len(keyterms)}
+
+    return await loop.run_in_executor(_executor, _build)
+
+
+# ── Tools — session_review (S10) ─────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def session_review(
+    app_id:         str,
+    lookback_hours: int  = 24,
+    run_tension:    bool = True,
+) -> dict:
+    """Review recent session activity using mistral:7b + receipt log.
+    Summarises what was done, what succeeded/failed, and flags tensions.
+    Mirrors /review (local PR diff) but for Willow sessions, not code PRs."""
+    logger.info("[w2] session_review app_id=%s hours=%d tension=%s", app_id, lookback_hours, run_tension)
+    if not pg:
+        return _no_pg()
+    loop = asyncio.get_running_loop()
+
+    def _review():
+        from sap.clients.professor_client import _ask_ollama
+        import psycopg2.extras as _pge
+
+        # Fetch recent receipts
+        receipts = []
+        try:
+            from core.pg_bridge import get_connection, release_connection
+            conn = get_connection()
+            try:
+                with conn.cursor(cursor_factory=_pge.RealDictCursor) as cur:
+                    cur.execute(
+                        "SELECT ts, app_id, tool, ok, latency_ms, error_type"
+                        " FROM willow.mcp_receipts"
+                        " WHERE ts > now() - interval '1 hour' * %s"
+                        " ORDER BY ts DESC LIMIT 100",
+                        (lookback_hours,),
+                    )
+                    receipts = [dict(r) for r in cur.fetchall()]
+            finally:
+                release_connection(conn)
+        except Exception as e:
+            logger.warning("[w2] session_review: receipts fetch failed: %s", e)
+
+        for r in receipts:
+            if hasattr(r.get("ts"), "isoformat"):
+                r["ts"] = r["ts"].isoformat()
+
+        tool_counts: dict = {}
+        errors = []
+        for r in receipts:
+            t = r.get("tool", "?")
+            tool_counts[t] = tool_counts.get(t, 0) + 1
+            if not r.get("ok") and r.get("error_type"):
+                errors.append({"tool": t, "error": r["error_type"], "ts": r.get("ts")})
+
+        # Fetch recent KB atoms
+        recent_atoms = []
+        try:
+            pg._ensure_conn()
+            with pg.conn.cursor(cursor_factory=_pge.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT id, title, summary FROM knowledge"
+                    " WHERE valid_at > now() - interval '1 hour' * %s"
+                    "   AND invalid_at IS NULL"
+                    " ORDER BY valid_at DESC LIMIT 20",
+                    (lookback_hours,),
+                )
+                recent_atoms = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            pass
+
+        # Build review prompt
+        tool_summary = ", ".join(f"{t}×{n}" for t, n in
+                                 sorted(tool_counts.items(), key=lambda x: -x[1])[:10])
+        atom_summary = "; ".join(a.get("title", "") for a in recent_atoms[:10])
+        error_summary = "; ".join(f"{e['tool']}({e['error']})" for e in errors[:5]) or "none"
+
+        prompt = (
+            f"Session review (last {lookback_hours}h). "
+            f"Tools called: {tool_summary or 'none'}. "
+            f"Errors: {error_summary}. "
+            f"New KB atoms: {atom_summary or 'none'}.\n\n"
+            "Write a concise session review (3-5 bullet points):\n"
+            "- What was accomplished\n- What succeeded or failed\n"
+            "- Knowledge gaps or loose ends\n- Suggested next steps"
+        )
+
+        synthesis = ""
+        try:
+            synthesis = _ask_ollama(
+                "mistral:7b",
+                "You are a session analyst. Write concise, actionable reviews.",
+                prompt,
+            ) or ""
+        except Exception as e:
+            synthesis = f"[review unavailable: {e}]"
+
+        result: dict = {
+            "review": synthesis.strip(),
+            "lookback_hours": lookback_hours,
+            "receipts_sampled": len(receipts),
+            "tool_counts": tool_counts,
+            "errors_found": len(errors),
+            "new_kb_atoms": len(recent_atoms),
+            "cited_receipts": [r.get("ts") for r in receipts[:5]],
+        }
+
+        # Tension scan inline if requested
+        if run_tension:
+            try:
+                tensions = []
+                atoms = pg.knowledge_search("", limit=30)
+                seen: set = set()
+                for atom in atoms[:10]:
+                    neighbors = pg.knowledge_search_semantic(atom.get("summary", ""), limit=3)
+                    for nb in neighbors:
+                        pk = tuple(sorted([atom.get("id", ""), nb.get("id", "")]))
+                        if pk in seen:
+                            continue
+                        seen.add(pk)
+                result["tension_pairs_checked"] = len(seen)
+                result["tensions_hint"] = "run tension_scan for full report"
+            except Exception:
+                pass
+
+        return result
+
+    return await loop.run_in_executor(_executor, _review)
+
+
+# ── Tools — env_ domain (S6) ─────────────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def env_check(app_id: str, fork_id: str) -> dict:
+    """Compare the current environment against the snapshot saved when fork_id was created.
+    Surfaces additions, removals, and value changes for WILLOW_/GROVE_ vars."""
+    logger.info("[w2] env_check app_id=%s fork=%s", app_id, fork_id)
+
+    def _check():
+        snapshot_rec = store.get(f"{app_id}/forks/{fork_id}/env", record_id="snapshot")
+        if not snapshot_rec:
+            return {"error": f"No env snapshot for fork {fork_id}. Was fork_create called by this app?"}
+        snapshot: dict = snapshot_rec.get("data", snapshot_rec) if "data" in snapshot_rec else snapshot_rec
+        current = {k: v for k, v in os.environ.items() if any(k.startswith(p) for p in _ENV_SNAPSHOT_PREFIXES)}
+        added   = {k: current[k] for k in current if k not in snapshot}
+        removed = {k: snapshot[k] for k in snapshot if k not in current}
+        changed = {k: {"was": snapshot[k], "now": current[k]}
+                   for k in current if k in snapshot and current[k] != snapshot[k]}
+        return {
+            "fork_id": fork_id,
+            "added":   added,
+            "removed": removed,
+            "changed": changed,
+            "clean":   not (added or removed or changed),
+        }
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, _check)
+
+
+# ── Tools — diagnostic_summary (S4) ──────────────────────────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def diagnostic_summary(
+    app_id: str,
+    path:   str  = ".",
+    tool:   str  = "auto",
+) -> dict:
+    """Run ruff and/or mypy on path and return structured diagnostic output.
+    Mirrors CC's DiagnosticTrackingService.formatDiagnosticsSummary pattern.
+    tool: auto | ruff | mypy | both
+    Baseline delta: compares against last run saved in SOIL (app_id/diag/baseline)."""
+    logger.info("[w2] diagnostic_summary app_id=%s path=%s tool=%s", app_id, path, tool)
+    loop = asyncio.get_running_loop()
+
+    def _diag():
+        import subprocess as _sp, json as _j, shutil as _sh
+        from pathlib import Path as _P
+
+        results: dict = {"path": path, "tool": tool, "diagnostics": []}
+        baseline_key = f"{app_id}/diag/baseline"
+
+        def _run_ruff() -> list:
+            if not _sh.which("ruff"):
+                return []
+            try:
+                out = _sp.check_output(
+                    ["ruff", "check", path, "--output-format=json", "--quiet"],
+                    cwd=os.getcwd(), stderr=_sp.DEVNULL, timeout=30,
+                )
+                items = _j.loads(out.decode())
+                return [{"file": i.get("filename"), "line": i.get("location", {}).get("row"),
+                         "col": i.get("location", {}).get("column"),
+                         "code": i.get("code"), "message": i.get("message"),
+                         "severity": "Error" if i.get("code", "").startswith("E") else "Warning",
+                         "source": "ruff"} for i in items]
+            except _sp.CalledProcessError as e:
+                try:
+                    return [{"file": i.get("filename"), "line": i.get("location", {}).get("row"),
+                             "code": i.get("code"), "message": i.get("message"),
+                             "severity": "Warning", "source": "ruff"}
+                            for i in _j.loads(e.output.decode())]
+                except Exception:
+                    return []
+            except Exception:
+                return []
+
+        def _run_mypy() -> list:
+            if not _sh.which("mypy"):
+                return []
+            try:
+                out = _sp.check_output(
+                    ["mypy", path, "--output=json", "--no-error-summary"],
+                    cwd=os.getcwd(), stderr=_sp.STDOUT, timeout=60,
+                )
+                lines = out.decode().splitlines()
+            except _sp.CalledProcessError as e:
+                lines = e.output.decode().splitlines()
+            except Exception:
+                return []
+            diags = []
+            for line in lines:
+                try:
+                    item = _j.loads(line)
+                    diags.append({
+                        "file": item.get("file"), "line": item.get("line"),
+                        "col": item.get("column"), "code": item.get("error_code"),
+                        "message": item.get("message"),
+                        "severity": "Error" if item.get("severity") == "error" else "Warning",
+                        "source": "mypy",
+                    })
+                except Exception:
+                    pass
+            return diags
+
+        use_ruff = tool in ("auto", "ruff", "both")
+        use_mypy = tool in ("mypy", "both")
+
+        all_diags = []
+        if use_ruff:
+            all_diags.extend(_run_ruff())
+        if use_mypy:
+            all_diags.extend(_run_mypy())
+
+        # Baseline delta — subtract known diagnostics
+        try:
+            baseline_rec = store.get(baseline_key)
+            baseline_diags = baseline_rec.get("diagnostics", []) if baseline_rec else []
+        except Exception:
+            baseline_diags = []
+
+        baseline_sigs = {(d.get("file"), d.get("line"), d.get("code")) for d in baseline_diags}
+        new_diags = [d for d in all_diags
+                     if (d.get("file"), d.get("line"), d.get("code")) not in baseline_sigs]
+
+        # Save current as new baseline
+        try:
+            store.put(baseline_key, {"diagnostics": all_diags})
+        except Exception:
+            pass
+
+        # Format summary (mirrors formatDiagnosticsSummary)
+        sev_sym = {"Error": "✗", "Warning": "⚠", "Info": "ℹ", "Hint": "★"}
+        lines = []
+        for d in new_diags[:50]:
+            sym = sev_sym.get(d.get("severity", "Warning"), "·")
+            lines.append(
+                f"  {sym} [{d.get('file','?')}:{d.get('line','?')}] "
+                f"{d.get('message','')} [{d.get('code','')}] ({d.get('source','')})"
+            )
+
+        results["diagnostics"] = new_diags
+        results["total_found"] = len(all_diags)
+        results["new_since_baseline"] = len(new_diags)
+        results["summary"] = "\n".join(lines) if lines else "No new diagnostics."
+        return results
+
+    return await loop.run_in_executor(_executor, _diag)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
