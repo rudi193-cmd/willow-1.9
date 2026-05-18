@@ -13,7 +13,7 @@ Usage (run in background from terminal or as a systemd service):
 
 Systemd one-liner:
     systemd-run --user --unit=willow-watchdog \
-        python3 /home/sean-campbell/github/willow-1.9/scripts/willow_watchdog.py
+        python3 "${WILLOW_ROOT}/scripts/willow_watchdog.py"
 """
 import argparse
 import os

@@ -23,7 +23,7 @@ OPENROUTER_MODEL = "openai/gpt-4o-mini"
 CODEX_AGENTS: set[str] = {"ganas4"}
 CODEX_MODEL = "claude-haiku-4-5-20251001"
 CODEX_URL   = "https://api.anthropic.com/v1/messages"
-CODEX_REPO  = "/home/sean-campbell/github/willow-nest"
+CODEX_REPO  = __import__("os").environ.get("WILLOW_NEST_ROOT", str(__import__("pathlib").Path.home() / "github" / "willow-nest"))
 
 # ── Image generation ───────────────────────────────────────────────────────────
 

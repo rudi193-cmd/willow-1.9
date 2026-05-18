@@ -325,7 +325,7 @@ def norn_pass(dry_run: bool = False, collections: list[str] | None = None) -> di
         # Grove message ingest — optional, skipped silently if Grove not present
         try:
             import importlib.util as _ilu
-            _grove_root = WILLOW_ROOT.parent / "safe-app-grove"
+            _grove_root = WILLOW_ROOT.parent / "safe-app-willow-grove"
             _si_path = _grove_root / "safe_integration.py"
             if _si_path.exists():
                 _si_spec = _ilu.spec_from_file_location("grove_safe_integration", _si_path)

@@ -6,9 +6,9 @@ Exposes send, status, and sessions as MCP tools.
 
 .mcp.json entry:
   "openclaw": {
-    "command": "/home/sean-campbell/.willow-venv/bin/python3",
+    "command": "${WILLOW_ROOT}/.venv-dev/bin/python3",
     "args": ["-m", "sap.openclaw_mcp"],
-    "cwd": "/home/sean-campbell/github/willow-1.9"
+    "cwd": "${WILLOW_ROOT}"
   }
 """
 import json

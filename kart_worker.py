@@ -96,6 +96,9 @@ def _bwrap_prefix(allow_net: bool = False) -> list[str]:
     willow_venv = os.path.join(home, ".willow-venv")
     if os.path.exists(willow_venv):
         args += ["--ro-bind", willow_venv, willow_venv]
+    repo_venv = str(Path(__file__).parent / ".venv-dev")
+    if os.path.exists(repo_venv) and repo_venv != willow_venv:
+        args += ["--ro-bind", repo_venv, repo_venv]
     try:
         import psycopg2 as _pg2
         pg2_dir = os.path.dirname(_pg2.__file__)
@@ -228,7 +231,9 @@ def execute_task(task_text: str) -> dict:
     for k, v in os.environ.items():
         if k.startswith(("WILLOW_", "POSTGRES", "PG", "OLLAMA_", "GIT_", "TWINE_", "PYPI_")):
             env[k] = v
-    venv_bin = os.path.join(os.path.expanduser("~"), ".willow-venv", "bin")
+    _repo_venv_bin = str(Path(__file__).parent / ".venv-dev" / "bin")
+    _home_venv_bin = os.path.join(os.path.expanduser("~"), ".willow-venv", "bin")
+    venv_bin = _repo_venv_bin if os.path.exists(_repo_venv_bin) else _home_venv_bin
     if os.path.exists(venv_bin) and venv_bin not in env["PATH"]:
         env["PATH"] = venv_bin + ":" + env["PATH"]
     if "GIT_AUTHOR_NAME" not in env:
@@ -384,7 +389,7 @@ def _kart_run_open(task_id: str, task_text: str, submitted_by: str) -> None:
     is never overwritten by a Kart child run.
     """
     if _ensure_willow_on_path() is None:
-        logger.debug("run_ledger open skipped: WILLOW_ROOT / ~/github/willow-1.9 not found")
+        logger.debug("run_ledger open skipped: WILLOW_ROOT not found")
         return
     try:
         from core.run_ledger import open_run, current_run_id

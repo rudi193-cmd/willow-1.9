@@ -5,11 +5,12 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
+Environment=WILLOW_ROOT=%h/willow-1.9
 Environment=WILLOW_PG_DB=willow_19
 Environment=WILLOW_PG_USER=%u
-Environment=PYTHONPATH=%h/github/willow-1.9
-ExecStart=%h/.willow-venv/bin/python3 %h/github/willow-1.9/sap/sap_mcp.py --http
-WorkingDirectory=%h/github/willow-1.9
+Environment=PYTHONPATH=%h/willow-1.9
+ExecStart=%h/willow-1.9/.venv-dev/bin/python3 %h/willow-1.9/sap/sap_mcp.py --http
+WorkingDirectory=%h/willow-1.9
 Restart=on-failure
 RestartSec=5
 
