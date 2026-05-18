@@ -19,10 +19,10 @@ except ImportError:
 
 DB_PARAMS = {"dbname": "willow_19", "user": "sean-campbell"}
 
-ROOTS = [
-    "/home/sean-campbell/github",
-    "/home/sean-campbell/Ashokoa/agents",
-]
+ROOTS = [str(p) for p in [
+    Path.home() / "github",
+    Path.home() / "Ashokoa" / "agents",
+] if p.exists()]
 
 SKIP_DIRS = {
     "node_modules", ".git", "__pycache__", ".mypy_cache",

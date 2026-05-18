@@ -21,7 +21,9 @@ SAP_MCP="${WILLOW_ROOT}/sap/sap_mcp.py"
 
 # Python
 if [[ -z "${WILLOW_PYTHON:-}" ]]; then
-    if [[ -x "${HOME}/.willow-venv/bin/python3" ]]; then
+    if [[ -x "${WILLOW_ROOT}/.venv-dev/bin/python3" ]]; then
+        WILLOW_PYTHON="${WILLOW_ROOT}/.venv-dev/bin/python3"
+    elif [[ -x "${HOME}/.willow-venv/bin/python3" ]]; then
         WILLOW_PYTHON="${HOME}/.willow-venv/bin/python3"
     else
         WILLOW_PYTHON="$(command -v python3)"
