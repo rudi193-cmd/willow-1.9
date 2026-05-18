@@ -1764,8 +1764,11 @@ async def handoff_rebuild(app_id: str) -> dict:
         script    = str(canonical) if canonical.exists() else str(local)
         if not Path(script).exists():
             return {"error": f"build script not found: {script}"}
+        env = os.environ.copy()
+        env["WILLOW_HANDOFF_DB"]   = HANDOFF_DB
+        env["WILLOW_HANDOFF_DIRS"] = HANDOFF_DIRS
         proc = _sp.run(
-            [sys.executable, script], capture_output=True, text=True, timeout=60,
+            [sys.executable, script], capture_output=True, text=True, timeout=60, env=env,
         )
         return {
             "status":  "ok" if proc.returncode == 0 else "error",
