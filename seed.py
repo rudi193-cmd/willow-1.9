@@ -42,10 +42,17 @@ def _ensure_venv() -> None:
     """On Ubuntu 24.04+ the system python is externally-managed; re-exec under a venv."""
     if sys.prefix != sys.base_prefix:
         return  # already inside a venv
+    # Willow deps are pinned to 3.12 — prefer it over whatever system python ran us
+    preferred = sys.executable
+    for candidate in ["python3.12", "python3.11", "python3.10"]:
+        found = shutil.which(candidate)
+        if found:
+            preferred = found
+            break
     venv_python = VENV_DIR / "bin" / "python3"
     if not venv_python.exists():
         print("  [venv] creating ~/.willow/venv (Ubuntu 24.04 compatibility)...")
-        subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
+        subprocess.run([preferred, "-m", "venv", str(VENV_DIR)], check=True)
     os.execv(str(venv_python), [str(venv_python)] + sys.argv)
 
 
@@ -572,6 +579,11 @@ def _step_vault() -> None:
 
 
 def _pg_major_version() -> str:
+    import glob as _glob
+    for _pg_bin in sorted(_glob.glob("/usr/lib/postgresql/*/bin"), reverse=True):
+        if _pg_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = _pg_bin + ":" + os.environ.get("PATH", "")
+            break
     out = subprocess.run(["postgres", "--version"], capture_output=True, text=True).stdout
     for part in out.split():
         if part[0].isdigit() and "." in part:
@@ -584,6 +596,13 @@ def _ensure_postgres() -> bool:
     Pre-curses preflight: install postgres + pgvector if absent, ensure user role,
     create willow_19 if missing.  Prints to stdout.  Returns True if willow_19 is connectable.
     """
+    import glob as _glob
+    # Ubuntu installs postgres binaries to a versioned path not on default PATH
+    for _pg_bin in sorted(_glob.glob("/usr/lib/postgresql/*/bin"), reverse=True):
+        if _pg_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = _pg_bin + ":" + os.environ.get("PATH", "")
+            break
+
     user = os.environ.get("USER", "")
 
     if subprocess.run(["pg_isready", "-q"], capture_output=True).returncode != 0:
@@ -603,6 +622,12 @@ def _ensure_postgres() -> bool:
     pg_ver = _pg_major_version()
     subprocess.run(
         ["sudo", "apt-get", "install", "-y", f"postgresql-{pg_ver}-pgvector"],
+        capture_output=True,
+    )
+    # Enable pgvector in willow_19 — requires superuser (apt installs the SO but doesn't activate it)
+    subprocess.run(
+        ["sudo", "-u", "postgres", "psql", "-c",
+         "CREATE EXTENSION IF NOT EXISTS vector;", "willow_19"],
         capture_output=True,
     )
 
