@@ -6,7 +6,7 @@ b20: SAPMCP2  ΔΣ=42
 
 FastMCP rebuild of sap_mcp.py.
 
-Tool prefixes (13 domains):
+Tool prefixes (14 domains):
   kb_        knowledge base
   soil_      store (WillowStore)
   fleet_     server status, health, reload, restart
@@ -18,6 +18,7 @@ Tool prefixes (13 domains):
   ledger_    frank ledger read/write
   task_      task queue
   handoff_   handoff search
+  soul_      tension_scan, dream_check, dream_run (Soul mechanics)
   nest_      nest scan / queue
   infer_     chat, imagine, speak
 
@@ -1778,6 +1779,337 @@ async def handoff_rebuild(app_id: str) -> dict:
         }
 
     return await loop.run_in_executor(_executor, _rebuild)
+
+
+# ── Tools — soul_ domain (tension detection + AutoDream) ──────────────────────
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def tension_scan(
+    app_id:   str,
+    write_kb: bool = False,
+    limit:    int  = 30,
+) -> dict:
+    """Scan KB hypothesis/observed atoms for semantic tensions or redundancies.
+    Uses nomic-embed for neighbour search and mistral:7b for pair classification.
+    write_kb=True saves findings as a KB atom (category='tension')."""
+    logger.info("[w2] tension_scan app_id=%s write_kb=%s", app_id, write_kb)
+    loop = asyncio.get_running_loop()
+
+    def _scan():
+        import psycopg2.extras as _pge
+        from sap.clients.professor_client import _ask_ollama
+
+        if pg is None:
+            return {"error": "Postgres unavailable"}
+
+        # Fetch scannable atoms
+        try:
+            pg._ensure_conn()
+            with pg.conn.cursor(cursor_factory=_pge.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, title, summary, tier, confidence
+                    FROM knowledge
+                    WHERE invalid_at IS NULL
+                      AND tier IN ('hypothesis', 'observed')
+                      AND summary IS NOT NULL AND summary != ''
+                    ORDER BY valid_at DESC
+                    LIMIT 60
+                """)
+                atoms = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            return {"error": f"fetch failed: {e}"}
+
+        if len(atoms) < 2:
+            return {"pairs_checked": 0, "tensions": [], "message": "Not enough atoms to scan"}
+
+        seen_pairs: set = set()
+        tensions: list = []
+        compatible = 0
+
+        for atom in atoms:
+            if len(tensions) >= limit:
+                break
+            try:
+                neighbors = pg.knowledge_search_semantic(atom["summary"], limit=4)
+            except Exception:
+                continue
+            for nb in neighbors:
+                nid = nb.get("id", "")
+                if not nid or nid == atom["id"]:
+                    continue
+                pair_key = tuple(sorted([atom["id"], nid]))
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                prompt = (
+                    f"Atom A — {atom['title']}\n{atom['summary'][:300]}\n\n"
+                    f"Atom B — {nb.get('title','')}\n{(nb.get('summary') or '')[:300]}\n\n"
+                    "Classify with EXACTLY one label on the first line, then one reasoning sentence:\n"
+                    "TENSION — atoms make conflicting claims\n"
+                    "REDUNDANT — one supersedes or fully contains the other\n"
+                    "COMPATIBLE — complementary, no conflict"
+                )
+                try:
+                    resp = _ask_ollama(
+                        "mistral:7b",
+                        "You are a knowledge graph auditor. Classify atom pairs tersely.",
+                        prompt,
+                    ) or ""
+                except Exception:
+                    resp = ""
+
+                label = resp.strip().split("\n")[0].upper() if resp else ""
+                if "TENSION" in label or "REDUNDANT" in label:
+                    tensions.append({
+                        "type":   "redundant" if "REDUNDANT" in label else "tension",
+                        "atom_a": {"id": atom["id"], "title": atom["title"], "tier": atom.get("tier")},
+                        "atom_b": {"id": nid, "title": nb.get("title",""), "tier": nb.get("tier")},
+                        "reason": resp.strip()[:400],
+                    })
+                else:
+                    compatible += 1
+
+        result: dict = {
+            "pairs_checked":   len(seen_pairs),
+            "tensions":        tensions,
+            "compatible_pairs": compatible,
+        }
+
+        if write_kb and tensions:
+            try:
+                first = tensions[0]
+                kb_summary = (
+                    f"Tension scan found {len(tensions)} tension/redundancy pairs among "
+                    f"{len(atoms)} scannable atoms ({len(seen_pairs)} pairs checked). "
+                    f"First: {first['atom_a']['title']} vs {first['atom_b']['title']}."
+                )
+                pg.knowledge_put({
+                    "title":       f"Tension scan {__import__('datetime').datetime.now().strftime('%Y-%m-%d')}",
+                    "summary":     kb_summary,
+                    "content":     {"tensions": tensions, "pairs_checked": len(seen_pairs)},
+                    "category":    "tension",
+                    "source_type": "session",
+                    "project":     app_id,
+                    "weight":      0.6,
+                    "tier":        "observed",
+                    "confidence":  0.7,
+                })
+            except Exception as e:
+                result["write_error"] = str(e)
+
+        return result
+
+    return await loop.run_in_executor(_executor, _scan)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+@sap_gate()
+async def dream_check(app_id: str) -> dict:
+    """Check whether AutoDream conditions are met for this agent.
+    Conditions: 24h+ since last dream AND 5+ sessions (willow.runs rows) since last dream.
+    Returns {should_dream, hours_since_dream, sessions_since_dream, last_dream_at}."""
+    logger.info("[w2] dream_check app_id=%s", app_id)
+    loop = asyncio.get_running_loop()
+
+    def _check():
+        from datetime import datetime, timezone
+
+        dream_state = store.get(f"{app_id}/dream", "state") or {}
+        if dream_state.get("locked"):
+            return {"should_dream": False, "locked": True, "reason": "dream already running"}
+
+        now = datetime.now(timezone.utc)
+        last_str = dream_state.get("last_dream_at", "")
+        hours_elapsed = 999.0
+        if last_str:
+            try:
+                last = datetime.fromisoformat(last_str)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                hours_elapsed = (now - last).total_seconds() / 3600
+            except Exception:
+                pass
+
+        sessions_since = 0
+        if pg is not None:
+            try:
+                pg._ensure_conn()
+                with pg.conn.cursor() as cur:
+                    if last_str:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM willow.runs WHERE initiator=%s AND started_at > %s",
+                            (app_id, last_str),
+                        )
+                    else:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM willow.runs WHERE initiator=%s", (app_id,),
+                        )
+                    row = cur.fetchone()
+                    sessions_since = row[0] if row else 0
+            except Exception:
+                sessions_since = dream_state.get("sessions_since_dream", 0)
+
+        should_dream = hours_elapsed >= 24 and sessions_since >= 5
+        return {
+            "should_dream":         should_dream,
+            "hours_since_dream":    round(hours_elapsed, 1),
+            "sessions_since_dream": sessions_since,
+            "last_dream_at":        last_str or None,
+            "reason": (
+                f"{hours_elapsed:.1f}h elapsed, {sessions_since} sessions since last dream"
+                if should_dream
+                else f"conditions not met: {hours_elapsed:.1f}h / 24h, {sessions_since} / 5 sessions"
+            ),
+        }
+
+    return await loop.run_in_executor(_executor, _check)
+
+
+@mcp.tool()
+@sap_gate(write=True)
+async def dream_run(app_id: str, force: bool = False) -> dict:
+    """Run the AutoDream synthesis pipeline.
+    Checks conditions unless force=True. Runs tension scan, synthesises patterns
+    from recent KB atoms via mistral:7b, writes a dream KB atom, updates dream state.
+    Call dream_check first unless you intend force=True."""
+    logger.info("[w2] dream_run app_id=%s force=%s", app_id, force)
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        import psycopg2.extras as _pge
+        from datetime import datetime, timezone
+        from sap.clients.professor_client import _ask_ollama
+
+        if pg is None:
+            return {"error": "Postgres unavailable"}
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        # Check lock and conditions
+        dream_state = store.get(f"{app_id}/dream", "state") or {}
+        if dream_state.get("locked") and not force:
+            return {"error": "dream already running (locked). Pass force=true to override."}
+
+        if not force:
+            last_str = dream_state.get("last_dream_at", "")
+            if last_str:
+                try:
+                    last = datetime.fromisoformat(last_str)
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=timezone.utc)
+                    hours_elapsed = (now - last).total_seconds() / 3600
+                    if hours_elapsed < 24:
+                        return {"skipped": True, "reason": f"only {hours_elapsed:.1f}h since last dream (need 24h)"}
+                except Exception:
+                    pass
+
+        # Acquire lock
+        try:
+            store.put(f"{app_id}/dream", {"locked": True, "lock_acquired_at": now_iso}, record_id="state")
+        except Exception:
+            pass
+
+        try:
+            # 1. Fetch recent atoms for synthesis
+            pg._ensure_conn()
+            with pg.conn.cursor(cursor_factory=_pge.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, title, summary, tier, confidence, category
+                    FROM knowledge
+                    WHERE invalid_at IS NULL
+                      AND summary IS NOT NULL AND summary != ''
+                    ORDER BY valid_at DESC
+                    LIMIT 20
+                """)
+                atoms = [dict(r) for r in cur.fetchall()]
+
+            # 2. Lightweight tension scan (no KB write — dream atom captures it)
+            tensions: list = []
+            seen_pairs: set = set()
+            for atom in atoms[:10]:
+                try:
+                    neighbors = pg.knowledge_search_semantic(atom["summary"], limit=3)
+                    for nb in neighbors:
+                        nid = nb.get("id", "")
+                        if not nid or nid == atom["id"]:
+                            continue
+                        pair_key = tuple(sorted([atom["id"], nid]))
+                        if pair_key in seen_pairs:
+                            continue
+                        seen_pairs.add(pair_key)
+                        resp = _ask_ollama(
+                            "mistral:7b",
+                            "You are a knowledge graph auditor.",
+                            (f"A: {atom['title']}\n{atom['summary'][:200]}\n\n"
+                             f"B: {nb.get('title','')}\n{(nb.get('summary') or '')[:200]}\n\n"
+                             "Reply TENSION or COMPATIBLE (one word), then one sentence."),
+                        ) or ""
+                        if "TENSION" in resp.upper().split("\n")[0]:
+                            tensions.append({"ids": [atom["id"], nid], "reason": resp.strip()[:200]})
+                except Exception:
+                    continue
+
+            # 3. Synthesise patterns via local LLM
+            atom_digest = "\n".join(
+                f"- [{a.get('tier','?')}] {a['title']}: {(a.get('summary') or '')[:120]}"
+                for a in atoms[:12]
+            )
+            synthesis = _ask_ollama(
+                "mistral:7b",
+                "You are a thoughtful knowledge synthesist. Be concise and specific.",
+                (f"Reflecting on {len(atoms)} recent knowledge atoms for agent {app_id}:\n\n"
+                 f"{atom_digest}\n\n"
+                 "In 3-4 sentences: what patterns, connections, or gaps do you notice? "
+                 "What should be explored or reconciled next?"),
+            ) or ""
+
+            # 4. Write dream KB atom
+            dream_summary = (
+                f"AutoDream over {len(atoms)} atoms — {len(tensions)} tensions detected. "
+                + (synthesis[:300] if synthesis else "")
+            )
+            atom_id = pg.knowledge_put({
+                "title":       f"Dream {now.strftime('%Y-%m-%d')} — {app_id}",
+                "summary":     dream_summary,
+                "content":     {
+                    "synthesis":     synthesis,
+                    "tensions_found": len(tensions),
+                    "tension_pairs": tensions[:5],
+                    "atoms_scanned": len(atoms),
+                },
+                "category":    "dream",
+                "source_type": "session",
+                "project":     app_id,
+                "weight":      0.7,
+                "tier":        "observed",
+                "confidence":  0.75,
+            })
+
+            # 5. Release lock + update state
+            store.put(f"{app_id}/dream", {
+                "last_dream_at":        now_iso,
+                "locked":               False,
+                "last_dream_atom":      atom_id,
+            }, record_id="state")
+
+            return {
+                "atom_id":        atom_id,
+                "atoms_scanned":  len(atoms),
+                "tensions_found": len(tensions),
+                "synthesis":      synthesis[:500] if synthesis else "",
+            }
+
+        except Exception as e:
+            try:
+                store.put(f"{app_id}/dream", {"locked": False, "last_error": str(e)[:200]}, record_id="state")
+            except Exception:
+                pass
+            return {"error": str(e)}
+
+    return await loop.run_in_executor(_executor, _run)
 
 
 # ── Tools — nest_ domain ──────────────────────────────────────────────────────
