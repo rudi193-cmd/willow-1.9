@@ -450,6 +450,19 @@ def main():
     mark_session_clean()
     run_grove_ingest()
     run_compost()
+
+    try:
+        from willow.fylgja.loki import run_loki_review
+        loki_result = run_loki_review()
+        if loki_result["reviewed"] > 0:
+            print(
+                f"[Loki] {loki_result['reviewed']} reviewed, "
+                f"{loki_result['ratified']} ratified, "
+                f"{loki_result['rejected']} rejected"
+            )
+    except Exception:
+        pass
+
     run_atom_synthesis()     # Phase 3: catch atoms missed by hooks
     run_edge_linking()       # Phase 4: connect atoms into graph
     run_hook_pipeline(run_id=session_id)  # Phase 5: run registered hooks with isolation
