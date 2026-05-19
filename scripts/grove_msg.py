@@ -43,7 +43,7 @@ def _resolve_channel(cur, name: str) -> int:
         return row[0]
     # create on demand
     cur.execute(
-        "INSERT INTO grove.channels (name) VALUES (%s) RETURNING id", (name,)
+        "INSERT INTO grove.channels (name, channel_type) VALUES (%s, 'group') RETURNING id", (name,)
     )
     return cur.fetchone()[0]
 
