@@ -2171,9 +2171,10 @@ async def nest_file(
 
     def _file():
         from sap.core.nest_intake import confirm_review, skip_item
+        iid = int(item_id)
         if action == "confirm":
-            return confirm_review(item_id, override_dest=override_dest or None)
-        return skip_item(item_id)
+            return confirm_review(iid, override_dest=override_dest or None)
+        return skip_item(iid)
 
     return await loop.run_in_executor(_executor, _file)
 
