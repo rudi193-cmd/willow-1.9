@@ -164,11 +164,23 @@ class FleetManager:
             )
             return
 
+        # Skip silently if the script doesn't exist — open circuit breaker so we don't loop
+        cmd = cfg["cmd"]
+        if len(cmd) > 1:
+            script = Path(cmd[1])
+            if not script.exists():
+                _log.warning(
+                    "Skipping %s — script not found: %s (circuit breaker opened)",
+                    name, script,
+                )
+                self._failures[name] = _CIRCUIT_BREAKER_THRESHOLD
+                return
+
         env = {**os.environ, **cfg.get("env", {})}
         log_fh = open(_LOG_FILE, "a")
         try:
             proc = subprocess.Popen(
-                cfg["cmd"],
+                cmd,
                 cwd=cfg.get("cwd"),
                 env=env,
                 stdout=log_fh,
@@ -207,15 +219,14 @@ class FleetManager:
                             _log.info("%s exited cleanly (rc=0) — not respawning (restart_policy=on_failure)", name)
                         continue
 
-                    self._failures[name] = self._failures.get(name, 0) + 1
-                    count = self._failures[name]
-                    # GAP 7: log the actual exit code so we know WHY it died
-                    with _LOG_LOCK:
-                        _log.warning("%s exited (rc=%s, failure #%d)", name, rc, count)
-
-                    # GAP 1: backoff — skip if we're not due for a retry yet
+                    # Backoff check BEFORE incrementing — don't log or count during cooldown
                     if now < self._next_retry_at.get(name, 0.0):
                         continue
+
+                    self._failures[name] = self._failures.get(name, 0) + 1
+                    count = self._failures[name]
+                    with _LOG_LOCK:
+                        _log.warning("%s exited (rc=%s, failure #%d)", name, rc, count)
 
                     if count <= _MAX_SILENT_RESTARTS:
                         self._spawn(name, cfg)
@@ -223,7 +234,6 @@ class FleetManager:
                         self._alerted.add(name)
                         self._on_alert(name, count)
 
-                    # GAP 1: set next retry time with exponential backoff
                     delay = min(_BACKOFF_BASE_SECS * (2 ** (count - 1)), _BACKOFF_MAX_SECS)
                     self._next_retry_at[name] = now + delay
                     if count > 1:

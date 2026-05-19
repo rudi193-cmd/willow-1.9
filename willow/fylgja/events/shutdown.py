@@ -407,6 +407,33 @@ def _is_isolated_directory() -> bool:
         return False
 
 
+def _warn_if_handoff_missing() -> None:
+    """Print a warning if no KB handoff atom was written today. Non-blocking."""
+    try:
+        from core.pg_bridge import get_connection, release_connection
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        pg_conn = get_connection()
+        try:
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM knowledge "
+                    "WHERE category = 'handoff' AND source_type = 'session' "
+                    "AND valid_at::date = %s::date AND invalid_at IS NULL",
+                    (today,),
+                )
+                count = cur.fetchone()[0]
+        finally:
+            release_connection(pg_conn)
+        if count == 0:
+            print(
+                "\n⚠  SHUTDOWN WARNING: no KB handoff atom found for today.\n"
+                "   Run /handoff BEFORE /shutdown — the next session will start blind.\n",
+                file=sys.stderr,
+            )
+    except Exception:
+        pass
+
+
 def main():
     if _is_isolated_directory():
         import sys as _sys; _sys.exit(0)
@@ -419,6 +446,7 @@ def main():
 
     session_id = data.get("session_id", "")
 
+    _warn_if_handoff_missing()
     mark_session_clean()
     run_grove_ingest()
     run_compost()

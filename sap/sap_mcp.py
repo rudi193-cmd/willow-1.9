@@ -121,12 +121,13 @@ _ENV_SNAPSHOT_PREFIXES = ("WILLOW_", "GROVE_", "HOME", "USER", "PATH", "PGUSER",
 # ── Startup helpers ───────────────────────────────────────────────────────────
 
 def _kill_stale_instances() -> None:
-    """Terminate other sap_mcp.py processes and their idle Postgres connections."""
+    """Terminate other sap_mcp.py processes FROM THIS REPO and their idle Postgres connections."""
     import signal
     import time
     import psutil  # type: ignore[import]
 
     my_pid = os.getpid()
+    my_root = str(_SAP_ROOT)  # Only kill instances from the same repo root
     stale_pids: list[int] = []
 
     try:
@@ -134,7 +135,7 @@ def _kill_stale_instances() -> None:
             if proc.info["pid"] == my_pid:
                 continue
             cmdline = " ".join(proc.info.get("cmdline") or [])
-            if "sap_mcp" in cmdline or "sap.server" in cmdline:
+            if ("sap_mcp" in cmdline or "sap.server" in cmdline) and my_root in cmdline:
                 stale_pids.append(proc.info["pid"])
     except Exception as err:
         logger.warning("[w2] stale instance scan failed: %s", err)
@@ -1699,13 +1700,13 @@ async def handoff_latest(app_id: str, agent: str = "") -> dict:
             SELECT f.filename, h.handoff_date, h.summary, h.open_threads, h.questions
             FROM handoffs h JOIN files f ON h.file_id = f.id
             WHERE h.file_type = 'session' AND f.filename LIKE ?
-            ORDER BY f.mtime DESC, f.id DESC LIMIT 1
+            ORDER BY (h.summary IS NOT NULL) DESC, f.mtime DESC, f.id DESC LIMIT 1
         """
         sql_any = """
             SELECT f.filename, h.handoff_date, h.summary, h.open_threads, h.questions
             FROM handoffs h JOIN files f ON h.file_id = f.id
             WHERE h.file_type = 'session'
-            ORDER BY f.mtime DESC, f.id DESC LIMIT 1
+            ORDER BY (h.summary IS NOT NULL) DESC, f.mtime DESC, f.id DESC LIMIT 1
         """
         row = cur.execute(sql_agent, (f"%{agent_filter}%",)).fetchone() if agent_filter else None
         if not row:
