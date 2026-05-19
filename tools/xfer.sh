@@ -11,8 +11,10 @@
 
 set -euo pipefail
 
-REMOTE="desktop"
+REMOTE_HOST="192.168.12.237"
 REMOTE_USER="sean-campbell"
+SSH_KEY="$HOME/.ssh/id_ed25519_desktop"
+REMOTE="${REMOTE_USER}@${REMOTE_HOST}"
 
 usage() {
     echo "Usage: xfer.sh pull <remote-path> [local-dest]"
@@ -32,17 +34,17 @@ case "$CMD" in
         REMOTE_PATH="$PATH1"
         LOCAL_DEST="${PATH2:-.}"
         echo "[xfer] pull: desktop:$REMOTE_PATH → $LOCAL_DEST"
-        rsync -avz --progress -e "ssh" "${REMOTE}:${REMOTE_PATH}" "$LOCAL_DEST"
+        rsync -avz --progress -e "ssh -i $SSH_KEY" "${REMOTE}:${REMOTE_PATH}" "$LOCAL_DEST"
         ;;
     push)
         LOCAL_PATH="$PATH1"
         REMOTE_DEST="${PATH2:-$(dirname "$LOCAL_PATH")}"
         echo "[xfer] push: $LOCAL_PATH → desktop:$REMOTE_DEST"
-        rsync -avz --progress -e "ssh" "$LOCAL_PATH" "${REMOTE}:${REMOTE_DEST}"
+        rsync -avz --progress -e "ssh -i $SSH_KEY" "$LOCAL_PATH" "${REMOTE}:${REMOTE_DEST}"
         ;;
     ls)
         REMOTE_PATH="$PATH1"
-        ssh "$REMOTE" ls -lah "$REMOTE_PATH"
+        ssh -i "$SSH_KEY" "$REMOTE" ls -lah "$REMOTE_PATH"
         ;;
     *)
         usage
