@@ -33,7 +33,14 @@ except ImportError:
 
 def _connect(db: str) -> psycopg2.extensions.connection:
     user = os.environ.get("WILLOW_PG_USER", os.environ.get("USER", ""))
-    return psycopg2.connect(dbname=db, user=user)
+    host = os.environ.get("WILLOW_PG_HOST", "")
+    port = os.environ.get("WILLOW_PG_PORT", "")
+    kwargs: dict = {"dbname": db, "user": user}
+    if host:
+        kwargs["host"] = host
+    if port:
+        kwargs["port"] = int(port)
+    return psycopg2.connect(**kwargs)
 
 
 def _resolve_channel(cur, name: str) -> int:
