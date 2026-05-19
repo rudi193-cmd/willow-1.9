@@ -20,30 +20,31 @@ _TIMEOUT = 25
 _COLLECTION = "personal/candidates"
 
 _SYSTEM = """\
-You review candidate personal memory atoms for Sean Campbell's knowledge base.
-Decide: is this a genuine, specific personal life detail worth storing long-term?
+You are a strict personal memory gate. Your job is to reject false positives.
 
-KEEP if the text contains: a real health event (diagnosis, injury, treatment), a named family
-situation, a financial event (bankruptcy, debt), a named creative project, a strong emotion
-tied to a specific event, or a concrete life-state change.
+The keyword detector upstream is noisy — it flags words like "back", "feel", "doctor"
+that often appear in non-personal contexts. Read the CONTENT, not the keyword labels.
 
-REJECT if: the match is incidental (the word "back" in a coding sentence), the detail is
-vague or generic, it is about Sean's software projects (not his personal life), or there
-is not enough context to form a meaningful atom.
+DEFAULT: REJECT. Only keep if clearly personal.
 
-Respond with JSON only — no markdown fences, no explanation outside the JSON:
-{
-  "keep": true,
-  "atom": {
-    "kind": "event|trait|goal|context",
-    "title": "short title (max 60 chars)",
-    "category": "health|family|finance|creative|emotion|job|personal",
-    "summary": "1-2 sentence description of the personal detail",
-    "signal_strength": 1
-  }
-}
-If keep is false: {"keep": false}
-signal_strength: 1=weak/uncertain, 3=clear, 5=significant life event.\
+KEEP only when the excerpt contains a specific, durable personal life detail:
+- Health: a named diagnosis, injury, or active medical situation
+- Family: a named person in Sean's life + something that happened
+- Finance: a concrete financial event (bankruptcy, job loss, specific debt amount)
+- Creative: a named project (Books of Mann, Gerald Dispatches, Oakenscroll, UTETY, r/DispatchesFromReality)
+- Life change: a concrete state change (new job started, moved city, relationship change)
+- Emotion: a strong feeling tied to a specific named event — not a passing comment
+
+REJECT when:
+- The excerpt is about software, AI, coding, or Sean's agent fleet (Willow, Grove, Kart, heimdallr, hanuman, etc.)
+- The keyword fired in a different sense ("contributing back", "feel this is right", "back-end")
+- No specific event or named person is present
+- You are not certain — a missed atom is recoverable; a wrong atom is noise forever
+
+Respond with JSON only, no markdown:
+{"keep": true, "atom": {"kind": "event|trait|goal|context", "title": "max 60 chars", "category": "health|family|finance|creative|emotion|job|personal", "summary": "1-2 sentences", "signal_strength": 1}}
+If rejecting: {"keep": false}
+signal_strength: 1=weak, 3=clear, 5=significant life event.\
 """
 
 
@@ -63,8 +64,8 @@ def _parse_response(text: str) -> dict:
 def _ask_loki(categories: list[str], excerpt: str) -> dict:
     """Call mistral:7b to evaluate a candidate. Returns parsed JSON dict."""
     user_msg = (
-        f"Pattern categories matched: {', '.join(categories)}\n\n"
-        f"Conversation excerpt:\n{excerpt}"
+        f"Conversation excerpt:\n{excerpt}\n\n"
+        f"(Triggered patterns: {', '.join(categories)} — treat as hints only, not labels)"
     )
     payload = json.dumps({
         "model": _MODEL,
